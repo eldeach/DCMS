@@ -480,7 +480,79 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
     return this.toString()
   }
 
+  //================================================================================ [공통 기능] 계정 생성
+  app.post('/postAddDocPattern', loginCheck, async function(req,res){
+    let insertTable="tb_doc_no_pattern";
+    let columNamesArr=[]
+    let questions=[]
+    let valueArrys=[]
 
+    Object.keys(req.body).map(async (keyName,i)=>{
+      columNamesArr.push(keyName)
+      questions.push('?')
+      valueArrys.push(req.body[keyName])
+    })
+
+    columNamesArr.push("insert_datetime")
+    questions.push('now()')
+
+    columNamesArr.push("uuid_binary")
+    questions.push('UUID_TO_BIN(UUID())')
+
+    let auditTrailRows=[]
+    auditTrailRows.push(req.body.insert_by,"문서번호 패턴 생성 : '" + req.body.doc_no_pattern + "'",req.body.doc_no_pattern)
+
+    let qryResult = await insertFunc(insertTable,columNamesArr,questions,valueArrys)
+    .then(async (rowResult)=>{
+      await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+      return {success:true, result:rowResult}
+    })
+    .catch((err)=>{return {success:false, result:err}})
+    
+    res.json(qryResult)
+  })
+
+  //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
+  app.post('/duplicatedocpatterncheck', loginCheck, async function(req,res){
+    let qryResult = await strFunc("SELECT * FROM tb_doc_no_pattern WHERE doc_no_pattern ='"+req.body.doc_no_pattern+"'")
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  })
+
+  //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
+  app.post('/duplicatedocpatternnamecheck', loginCheck, async function(req,res){
+    let qryResult = await strFunc("SELECT * FROM tb_doc_no_pattern WHERE pattern_name ='"+req.body.pattern_name+"'")
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  })
+
+  //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
+  app.get('/getmngdocnopattern', loginCheck, async function (req, res) {
+    let qryResult = await strFunc("SELECT doc_no_pattern, start_rev_no, ref_sop_no, ref_sop_rev, pattern_name, pattern_description, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_doc_no_pattern " + await whereClause("tb_doc_no_pattern",req.query.searchKeyWord))
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  });
+    //================================================================================ [공통 기능] 계정 부여된 권한 삭제 (tb_user_auth에서 사용할 uuid_binary 값 전달이 필요함) [on Audit Trail]
+    app.delete('/deletedocnopattern', loginCheck, async function (req, res) {
+      let uuid_binarys=[]
+      let auditTrailRows=[]
+      req.query.targetRows.map((oneRow,i)=>{
+        let tempJsonParse=JSON.parse(oneRow)
+        uuid_binarys.push("uuid_binary = UUID_TO_BIN('" + tempJsonParse.uuid_binary +"')")
+        auditTrailRows.push([tempJsonParse.delete_by,"문서번호 패턴 삭제 : '"+tempJsonParse.doc_no_pattern+"'",tempJsonParse.doc_no_pattern])
+      })
+      let qryResult = await strFunc("DELETE FROM tb_doc_no_pattern WHERE " + uuid_binarys.join(" OR "))
+      .then(async (rowResult)=>{
+        await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+        return {success:true, result:rowResult}
+      })
+      .catch((err)=>{return {success:false, result:err}})
+
+      res.json(qryResult)
+  });
   //================================================================================ [공통 기능] 모든 route를 react SPA로 연결 (이 코드는 맨 아래 있어야함)
     app.get('/', function (req, res) {
       res.sendFile(path.join(__dirname, process.env.react_build_path+'index.html'));

@@ -694,7 +694,11 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
     questions.push('UUID_TO_BIN(UUID())')
 
     let auditTrailRows=[]
-    auditTrailRows.push(req.body.insert_by,"문서 정보 추가 : '" + req.body.doc_no + "("+ req.body.dlast_rev_no +")'",{doc_no:req.body.doc_no,rev_no:last_rev_no})
+    auditTrailRows.push(req.body.insert_by,"문서 정보 추가 : '" + req.body.doc_no + "("+ req.body.rev_no +")'",{doc_no:req.body.doc_no, rev_no:req.body.rev_no})
+
+    console.log("컬럼 길이:"+columNamesArr.length + "/ " + columNamesArr)
+    console.log("물음펴 길이:"+questions.length + "/ " + questions)
+    console.log("값 길이:"+valueArrys.length + "/ " + valueArrys)
 
     let qryResult = await insertFunc(insertTable,columNamesArr,questions,valueArrys)
     .then(async (rowResult)=>{
@@ -706,6 +710,26 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
     res.json(qryResult)
   })
 
+    //================================================================================ 
+    app.get('/getmngdoc', loginCheck, async function (req, res) {
+      let whereClause ="WHERE "
+      + "(tb_doc_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.rev_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.doc_title like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.written_by like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_doc_list.written_by_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.approval_date like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.invalid_date like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_doc_list.qualAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.valAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqAtt like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_doc_list.prodAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqmsAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.isprotocol like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_doc_list.relateddoc like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.remark like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_user.user_name like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_doc_list.uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (tb_doc_list.insert_datetime like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.update_datetime like '%"+req.query.searchKeyWord+"%')"
+
+      let qryResult = await strFunc("SELECT "
+      + "tb_doc_list.doc_no, tb_doc_list.rev_no, tb_doc_list.doc_title, tb_doc_list.written_by, tb_user.user_name, tb_doc_list.written_by_team, tb_doc_list.approval_date, tb_doc_list.invalid_date, tb_doc_list.remark, "
+      + "tb_doc_list.qualAtt, tb_doc_list.valAtt, tb_doc_list.eqAtt, tb_doc_list.prodAtt, tb_doc_list.eqmsAtt, tb_doc_list.isprotocol, tb_doc_list.relateddoc, "
+      + "BIN_TO_UUID(tb_doc_list.uuid_binary) AS uuid_binary,  tb_doc_list.insert_by,  tb_doc_list.insert_datetime,  tb_doc_list.update_by,  tb_doc_list.update_datetime "
+      + "FROM tb_doc_list LEFT OUTER JOIN tb_user ON tb_doc_list.written_by = tb_user.user_account " + whereClause+" ORDER BY tb_doc_list.insert_datetime DESC" )
+      .then((rowResult)=>{return {success:true, result:rowResult}})
+      .catch((err)=>{return {success:false, result:err}})
+      res.json(qryResult)
+    });
 
   //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
   app.post('/postextdatatmms', loginCheck, async function(req,res){
@@ -743,7 +767,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 });
   //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
   app.get('/adddoc_getextdatatmmswholeasset', loginCheck, async function (req, res) {
-    let qryResult = await strFunc("SELECT data_order, eq_team, eq_part, eq_location, drug_form, room_no, eq_code_alt, eq_code, eq_name, eq_grade, eq_inst_date, eq_capa, eq_model, eq_serial, eq_manf, eq_vendor, eq_is_legal, manuf_country, used_util, eq_cat, rev_status, is_latest, data_rev, eq_status, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by,insert_datetime, update_by, update_datetime FROM tb_extdata_tmms_whole_asset " + await whereClause("tb_extdata_tmms_whole_asset",req.query.searchKeyWord))
+    let qryResult = await strFunc("SELECT eq_code_alt, eq_code, eq_name, eq_team, eq_part, eq_location, drug_form, room_no, eq_grade, eq_inst_date, eq_capa, eq_model, eq_serial, eq_manf, eq_vendor, eq_is_legal, manuf_country, used_util, eq_cat, rev_status, is_latest, data_rev, eq_status, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by,insert_datetime, update_by, update_datetime FROM tb_extdata_tmms_whole_asset " + await whereClause("tb_extdata_tmms_whole_asset",req.query.searchKeyWord))
     .then((rowResult)=>{return {success:true, result:rowResult}})
     .catch((err)=>{return {success:false, result:err}})
     res.json(qryResult)

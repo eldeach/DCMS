@@ -22,7 +22,7 @@ const flash= require('connect-flash')
 const { default: axios } = require('axios');
 
 //================================================================================ [공통] maria DB 라이브러리 import
-const {strFunc, insertFunc, batchInsertFunc, whereClause, truncateTable} = require ('./maria_db/mariadb');
+const {strFunc, insertFunc, batchInsertFunc, batchInsertOnDupliFunc, whereClause, truncateTable} = require ('./maria_db/mariadb');
 const { type } = require('os');
 
 //================================================================================ [공통] bcrypt 라이브러리 import
@@ -35,14 +35,13 @@ const jwt = require("jsonwebtoken");
 //================================================================================ [공통] Express 객체 생성
 const app = express();
 
+//================================================================================ [공통 미들웨어] json
+app.use(express.json({limit: '10mb'}))
 //================================================================================ [공통 미들웨어] body-parser
 app.use(bodyParser.urlencoded({extended: true})) 
-app.use(express.urlencoded({extended: true}))
+app.use(express.urlencoded({limit: '10mb', extended: true}))
 //================================================================================ [공통 미들웨어] connect-flash
 app.use(flash())
-
-//================================================================================ [공통 미들웨어] json
-app.use(express.json())
 
 //================================================================================ [공통 미들웨어] passport
 const expireTimeMinutes=10
@@ -564,42 +563,296 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
     //================================================================================ [공통 기능] 계정 생성
     app.post('/postAddDocNo', loginCheck, async function(req,res){
-      console.log(req.body)
       let insertTable="tb_doc_no_list";
       let columNamesArr=[]
       let questions=[]
       let valueArrys=[]
-      req.body.pattenrs.map((onePattern,i)=>{
-        let tempDocNo = []
-        // columNamesArr.push(keyName)
-        // questions.push('?')
-        // valueArrys.push(req.body[keyName])
+
+      // =============== 시리얼 번호 발번 시작
+      let maxWholeSerial=[] // 현재까지 발번된 시리얼 번호 최대값 찾기
+      for(let i =0;i<req.body.pattenrs.length;i++ ){
+        // ========== 문서번호 패턴 가지고 부여된 최대 serial no 구하기
+        // ===== serial자리만 없는 패턴 구하기 {2_year} 현재값 적용, {3_serial_per_year} 공란으로 변경
+        let tempNoWithoutSerial = req.body.pattenrs[i].doc_no_pattern.replace("{2_year}",new Date().getFullYear().toString().substring(2,4)).replace("{3_serial_per_year}","")
+        
+        // 같은 패턴으로 검색해서 시리얼 자리에 들어값 값들 중 최대값 확인한기
+        let patternQryResult=  await strFunc("SELECT doc_no FROM tb_doc_no_list where doc_no like '%" + tempNoWithoutSerial +"%'")
+        let maxSerialInPattern =[]
+        patternQryResult.map((oneValue,i)=>{
+          maxSerialInPattern.push(parseInt(oneValue.doc_no.replace(tempNoWithoutSerial,'')))
+        })
+
+        // ========== serial pool 가지고 부여된 최대 serial no 구하기
+        let serialQryResult = await strFunc("SELECT max(used_serial) as maxSerial FROM tb_doc_no_list where serial_pool = '" + req.body.pattenrs[i].serial_pool +"' and DATE_FORMAT(insert_datetime, '%Y') = '" + new Date().getFullYear().toString()+"'")
+        let maxSerialInPool =  []
+        if(!serialQryResult[0].maxSerial){
+          maxSerialInPool.push(0)
+        }
+        else(
+          maxSerialInPool.push(parseInt(serialQryResult[0].maxSerial))
+        )
+        maxWholeSerial.push(Math.max(Math.max.apply(null,maxSerialInPattern),Math.max.apply(null,maxSerialInPool)))
+      }
+
+
+      // 찾은 시리얼 최대값에 +1 더하여 새 시리얼번호 발번하기
+      let newSerial = Math.max.apply(null,maxWholeSerial)+1
+      // 3자리 시리얼 번호 패턴에 사용하도록 str 생성
+      let serial_3digit=''
+      if (newSerial>99){
+        serial_3digit = ''+newSerial
+      }
+      else if(newSerial>9)
+      {
+        serial_3digit = '0'+newSerial
+      }
+      else {
+        serial_3digit = '00'+newSerial
+      }
+      // =============== 시리얼 번호 발번 종료
+
+      // =============== tb_doc_no_list 및 Audit Trail 새 Record 생성
+      let docNoList=[]
+      let addRows=[]
+      let auditTrailRows=[]
+      for(let i =0;i<req.body.pattenrs.length;i++ ){
+        let tempDocNo = req.body.pattenrs[i].doc_no_pattern.replace("{2_year}",new Date().getFullYear().toString().substring(2,4)).replace("{3_serial_per_year}",serial_3digit)
+        console.log(req.body.pattenrs[i].used_pattern)
+        addRows.push([tempDocNo, req.body.req_purpose, req.body.req_user,req.body.req_team, req.body.pattenrs[i].doc_no_pattern, req.body.pattenrs[i].pattern_name, req.body.pattenrs[i].start_rev_no, req.body.pattenrs[i].serial_pool,newSerial,req.body.remark,req.body.insert_by])
+        docNoList.push(tempDocNo)
+        auditTrailRows.push([req.body.insert_by,"문서번호 생성 : '" + tempDocNo + "'",tempDocNo])
+      }
+
+      let qryResult = await batchInsertFunc(insertTable,['doc_no', 'req_purpose', 'req_user', 'req_team', 'used_pattern', 'used_pattern_name', 'start_rev_no', 'serial_pool', 'used_serial', 'remark', 'insert_by', 'insert_datetime', 'uuid_binary'], ['?','?','?','?','?','?','?','?','?','?','?','now()','UUID_TO_BIN(UUID())'],addRows,false)
+      .then(async (rowResult)=>{
+        await batchInsertFunc("tb_audit_trail",['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+        return {success:true, result:docNoList}
       })
-  
-      // Object.keys(req.body).map(async (keyName,i)=>{
-      //   columNamesArr.push(keyName)
-      //   questions.push('?')
-      //   valueArrys.push(req.body[keyName])
-      // })
-  
-      // columNamesArr.push("insert_datetime")
-      // questions.push('now()')
-  
-      // columNamesArr.push("uuid_binary")
-      // questions.push('UUID_TO_BIN(UUID())')
-  
-      // let auditTrailRows=[]
-      // auditTrailRows.push(req.body.insert_by,"문서번호 패턴 생성 : '" + req.body.doc_no_pattern + "'",req.body.doc_no_pattern)
-  
-      // let qryResult = await insertFunc(insertTable,columNamesArr,questions,valueArrys)
-      // .then(async (rowResult)=>{
-      //   await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
-      //   return {success:true, result:rowResult}
-      // })
-      // .catch((err)=>{return {success:false, result:err}})
-      
-      res.json( {success:true, result:"A"})
+      .catch((err)=>{return {success:false, result:err}})
+
+      console.log("audit result : ")
+      console.log(auditTrailRows)
+      console.log(qryResult)
+      res.json(qryResult)
     })
+
+  //================================================================================ 
+  app.get('/getmngdocno', loginCheck, async function (req, res) {
+    let whereClause = "WHERE (tb_user.user_name like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_purpose like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_user like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.serial_pool like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.used_serial like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.remark like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (tb_doc_no_list.insert_datetime like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.update_datetime like '%"+req.query.searchKeyWord+"%')"
+    let qryResult = await strFunc("SELECT tb_doc_no_list.doc_no, tb_doc_no_list.req_purpose, tb_doc_no_list.req_user, tb_user.user_name, tb_doc_no_list.req_team, tb_doc_no_list.used_pattern, tb_doc_no_list.used_pattern_name, tb_doc_no_list.start_rev_no, doclist.last_rev_no, doclist.count_used, tb_doc_no_list.serial_pool, tb_doc_no_list.used_serial, tb_doc_no_list.remark, BIN_TO_UUID(tb_doc_no_list.uuid_binary) AS uuid_binary, tb_doc_no_list.insert_by, tb_doc_no_list.insert_datetime, tb_doc_no_list.update_by, tb_doc_no_list.update_datetime FROM tb_doc_no_list LEFT OUTER JOIN tb_user ON tb_doc_no_list.req_user = tb_user.user_account LEFT OUTER JOIN (SELECT doc_no, MAX(rev_no) AS last_rev_no, COUNT(doc_no) as count_used FROM tb_doc_list GROUP BY doc_no) AS doclist ON doclist.doc_no = tb_doc_no_list.doc_no " + whereClause +  " ORDER BY tb_doc_no_list.insert_datetime DESC")
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  });
+
+  //================================================================================ 
+  app.delete('/deletedocno', loginCheck, async function (req, res) {
+    let uuid_binarys=[]
+    let auditTrailRows=[]
+    req.query.targetRows.map((oneRow,i)=>{
+      let tempJsonParse=JSON.parse(oneRow)
+      uuid_binarys.push("uuid_binary = UUID_TO_BIN('" + tempJsonParse.uuid_binary +"')")
+      auditTrailRows.push([tempJsonParse.delete_by,"문서번호 삭제 : '"+tempJsonParse.doc_no+"'",tempJsonParse.doc_no])
+    })
+    let qryResult = await strFunc("DELETE FROM tb_doc_no_list WHERE " + uuid_binarys.join(" OR "))
+    .then(async (rowResult)=>{
+      await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+      return {success:true, result:rowResult}
+    })
+    .catch((err)=>{return {success:false, result:err}})
+
+    res.json(qryResult)
+  });
+
+  //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
+  app.get('/adddoc_getmngdocno', loginCheck, async function (req, res) {
+    console.log(req.query.searchKeyWord)
+    let whereClause = "WHERE (tb_user.user_name like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_purpose like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_user like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.serial_pool like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.used_serial like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.remark like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (tb_doc_no_list.insert_datetime like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.update_datetime like '%"+req.query.searchKeyWord+"%')"
+    let qryResult = await strFunc("SELECT tb_doc_no_list.doc_no, tb_doc_no_list.req_purpose, tb_doc_no_list.req_user, tb_user.user_name, tb_doc_no_list.req_team, tb_doc_no_list.used_pattern, tb_doc_no_list.used_pattern_name, tb_doc_no_list.start_rev_no, doclist.last_rev_no, doclist.count_used, tb_doc_no_list.serial_pool, tb_doc_no_list.used_serial, tb_doc_no_list.remark, BIN_TO_UUID(tb_doc_no_list.uuid_binary) AS uuid_binary, tb_doc_no_list.insert_by, tb_doc_no_list.insert_datetime, tb_doc_no_list.update_by, tb_doc_no_list.update_datetime FROM tb_doc_no_list LEFT OUTER JOIN tb_user ON tb_doc_no_list.req_user = tb_user.user_account LEFT OUTER JOIN (SELECT doc_no, MAX(rev_no) AS last_rev_no, COUNT(doc_no) as count_used FROM tb_doc_list GROUP BY doc_no) AS doclist ON doclist.doc_no = tb_doc_no_list.doc_no " + whereClause +  " ORDER BY tb_doc_no_list.insert_datetime DESC")
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  });
+
+  //================================================================================ [공통 기능] 계정 생성
+  app.post('/postAddDoc', loginCheck, async function(req,res){
+    let insertTable="tb_doc_list";
+    let columNamesArr=[]
+    let questions=[]
+    let valueArrys=[]
+
+    Object.keys(req.body).map(async (keyName,i)=>{
+      columNamesArr.push(keyName)
+      questions.push('?')
+      valueArrys.push(req.body[keyName])
+    })
+
+    columNamesArr.push("insert_datetime")
+    questions.push('now()')
+
+    columNamesArr.push("uuid_binary")
+    questions.push('UUID_TO_BIN(UUID())')
+
+    let auditTrailRows=[]
+    auditTrailRows.push(req.body.insert_by,"문서 정보 추가 : '" + req.body.doc_no + "("+ req.body.dlast_rev_no +")'",{doc_no:req.body.doc_no,rev_no:last_rev_no})
+
+    let qryResult = await insertFunc(insertTable,columNamesArr,questions,valueArrys)
+    .then(async (rowResult)=>{
+      await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+      return {success:true, result:rowResult}
+    })
+    .catch((err)=>{return {success:false, result:err}})
+    
+    res.json(qryResult)
+  })
+
+
+  //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
+  app.post('/postextdatatmms', loginCheck, async function(req,res){
+    let columNamesArr=['data_order', 'eq_team', 'eq_part', 'eq_location', 
+    'drug_form', 'room_no', 'eq_code_alt', 'eq_code', 'eq_name', 'eq_grade', 'eq_inst_date', 'eq_capa', 'eq_model', 'eq_serial', 
+    'eq_manf', 'eq_vendor', 'eq_is_legal', 'manuf_country', 'used_util', 'eq_cat', 'rev_status', 'is_latest', 'data_rev', 'eq_status',
+    'insert_by', 'insert_datetime','update_by', 'update_datetime', 'uuid_binary']
+    let questions=['?','?','?','?','?','?','?','?','?','?','?','?','?','?','?','?','?','?','?','?','?','?','?','?',"'"+req.body.handle_by+"'",'now()','NULL','NULL','UUID_TO_BIN(UUID())']
+    let valueArrys=[]
+    let dupStrArry=['data_order=VALUES(data_order)','eq_team=VALUES(eq_team)','eq_part=VALUES(eq_part)','eq_location=VALUES(eq_location)','drug_form=VALUES(drug_form)','room_no=VALUES(room_no)',
+    'eq_code_alt=VALUES(eq_code_alt)','eq_name=VALUES(eq_name)','eq_grade=VALUES(eq_grade)','eq_inst_date=VALUES(eq_inst_date)','eq_capa=VALUES(eq_capa)','eq_model=VALUES(eq_model)','eq_serial=VALUES(eq_serial)',
+    'eq_manf=VALUES(eq_manf)','eq_vendor=VALUES(eq_vendor)','eq_is_legal=VALUES(eq_is_legal)','manuf_country=VALUES(manuf_country)','used_util=VALUES(used_util)', 
+    'eq_cat=VALUES(eq_cat)','rev_status=VALUES(rev_status)','is_latest=VALUES(is_latest)','data_rev=VALUES(data_rev)','eq_status=VALUES(eq_status)',"update_by='"+req.body.handle_by+"'",'update_datetime=now()']
+
+    req.body.extdatas.map((oneRow,i)=>{
+      let oneValueArry=[]
+      Object.keys(req.body.extdatas[i]).map(async (keyName,j)=>{
+        oneValueArry.push(req.body.extdatas[i][keyName])
+      })
+      valueArrys.push(oneValueArry)
+    })
+
+    let qryResult = await batchInsertOnDupliFunc("tb_extdata_tmms_whole_asset",columNamesArr,questions,valueArrys,dupStrArry)
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  })
+
+  //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
+  app.get('/getextdatatmmswholeasset', loginCheck, async function (req, res) {
+    let qryResult = await strFunc("SELECT data_order, eq_team, eq_part, eq_location, drug_form, room_no, eq_code_alt, eq_code, eq_name, eq_grade, eq_inst_date, eq_capa, eq_model, eq_serial, eq_manf, eq_vendor, eq_is_legal, manuf_country, used_util, eq_cat, rev_status, is_latest, data_rev, eq_status, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by,insert_datetime, update_by, update_datetime FROM tb_extdata_tmms_whole_asset " + await whereClause("tb_extdata_tmms_whole_asset",req.query.searchKeyWord))
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+});
+  //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
+  app.get('/adddoc_getextdatatmmswholeasset', loginCheck, async function (req, res) {
+    let qryResult = await strFunc("SELECT data_order, eq_team, eq_part, eq_location, drug_form, room_no, eq_code_alt, eq_code, eq_name, eq_grade, eq_inst_date, eq_capa, eq_model, eq_serial, eq_manf, eq_vendor, eq_is_legal, manuf_country, used_util, eq_cat, rev_status, is_latest, data_rev, eq_status, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by,insert_datetime, update_by, update_datetime FROM tb_extdata_tmms_whole_asset " + await whereClause("tb_extdata_tmms_whole_asset",req.query.searchKeyWord))
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+});
+
+  //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
+  app.post('/postextdatasapzmmr1010', loginCheck, async function(req,res){
+    let columNamesArr=['mat_cat', 'plant_code', 'mat_code', 'mat_name', 'mat_unit', 'mat_unit_name', 'mat_code_alt1', 'mat_code_alt2', 'mat_code_alt3',
+    'mat_code_alt4', 'mat_code_alt5', 'mat_code_alt6', 'mat_unit_alt1', 'mat_unit_alt1_name', 'mat_unit_alt1_value', 'mat_group', 'mat_ext_group',
+    'status_plants', 'status_mats_plants', 'max_store_level', 'prod_cat', 'prod_scrap', 'mrp_group', 'buy_group', 'mrp_cat', 'reorder_point', 'mrp_manager', 
+    'lot_size', 'lot_min_size', 'lot_max_size', 'lot_fix', 'assemble_group', 'provide_specical', 'provide_cat', 'production_store_location', 
+    'use_quater', 'ep_store_location', 'internal_production', 'intend_prodvide', 'leadtime_import', 'safe_time_indicator', 'safe_time', 'production_director', 
+    'delivery_tolerance_below', 'delivery_tolerance_above', 'temp_condition', 'mat_group_pack_mat', 'store_condition', 'remained_effect', 'total_shelf_life', 
+    'check_setting', 'provide_specical_cat', 'vendor_list', 'auto_po', 'lab_design_room', 'prod_layer_skeleton', 'layer1_name', 'layer2_name', 'layer3_name', 
+    'layer4_name', 'round_value', 'plant_delete', 'whole_delete', 'record_datetime', 'lastest_datetime', 'record_cat', 'std_text', 'std_code', 'std_code_name', 
+    'rep_code', 'std_code_alt1', 'insurance_code', 'approval_cat', 'approval_cat_name', 'approval_name', 'evaluation_class', 'pack_unit_authority', 'pack_unit_prod_code', 
+    'mat_account_group', 'safe_stock', 'min_safe_stock', 'provided_plant', 'uuid_binary', 'insert_by', 'insert_datetime', 'update_by', 'update_datetime']
+    let questions=['?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?',
+    '?', '?',  '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?',
+    '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', 
+    'UUID_TO_BIN(UUID())', "'"+req.body.handle_by+"'", 'now()', 'NULL', 'NULL']
+    let valueArrys=[]
+    let dupStrArry=[
+      'mat_cat= VALUES(mat_cat)', 'plant_code= VALUES(plant_code)', 'mat_code= VALUES(mat_code)', 'mat_name= VALUES(mat_name)', 'mat_unit= VALUES(mat_unit)',
+      'mat_unit_name= VALUES(mat_unit_name)', 'mat_code_alt1= VALUES(mat_code_alt1)', 'mat_code_alt2= VALUES(mat_code_alt2)', 'mat_code_alt3= VALUES(mat_code_alt3)',
+      'mat_code_alt4= VALUES(mat_code_alt4)', 'mat_code_alt5= VALUES(mat_code_alt5)', 'mat_code_alt6= VALUES(mat_code_alt6)', 'mat_unit_alt1= VALUES(mat_unit_alt1)',
+      'mat_unit_alt1_name= VALUES(mat_unit_alt1_name)', 'mat_unit_alt1_value= VALUES(mat_unit_alt1_value)', 'mat_group= VALUES(mat_group)', 'mat_ext_group= VALUES(mat_ext_group)',
+      'status_plants= VALUES(status_plants)', 'status_mats_plants= VALUES(status_mats_plants)', 'max_store_level= VALUES(max_store_level)', 'prod_cat= VALUES(prod_cat)',
+      'prod_scrap= VALUES(prod_scrap)', 'mrp_group= VALUES(mrp_group)', 'buy_group= VALUES(buy_group)', 'mrp_cat= VALUES(mrp_cat)', 'reorder_point= VALUES(reorder_point)',
+      'mrp_manager= VALUES(mrp_manager)', 'lot_size= VALUES(lot_size)', 'lot_min_size= VALUES(lot_min_size)', 'lot_max_size= VALUES(lot_max_size)', 'lot_fix= VALUES(lot_fix)',
+      'assemble_group= VALUES(assemble_group)', 'provide_specical= VALUES(provide_specical)', 'provide_cat= VALUES(provide_cat)', 'production_store_location= VALUES(production_store_location)',
+      'use_quater= VALUES(use_quater)', 'ep_store_location= VALUES(ep_store_location)', 'internal_production= VALUES(internal_production)', 'intend_prodvide= VALUES(intend_prodvide)',
+      'leadtime_import= VALUES(leadtime_import)', 'safe_time_indicator= VALUES(safe_time_indicator)', 'safe_time= VALUES(safe_time)', 'production_director= VALUES(production_director)',
+      'delivery_tolerance_below= VALUES(delivery_tolerance_below)', 'delivery_tolerance_above= VALUES(delivery_tolerance_above)', 'temp_condition= VALUES(temp_condition)',
+      'mat_group_pack_mat= VALUES(mat_group_pack_mat)', 'store_condition= VALUES(store_condition)', 'remained_effect= VALUES(remained_effect)', 'total_shelf_life= VALUES(total_shelf_life)',
+      'check_setting= VALUES(check_setting)', 'provide_specical_cat= VALUES(provide_specical_cat)', 'vendor_list= VALUES(vendor_list)', 'auto_po= VALUES(auto_po)', 'lab_design_room= VALUES(lab_design_room)',
+      'prod_layer_skeleton= VALUES(prod_layer_skeleton)', 'layer1_name= VALUES(layer1_name)', 'layer2_name= VALUES(layer2_name)', 'layer3_name= VALUES(layer3_name)', 'layer4_name= VALUES(layer4_name)',
+      'round_value= VALUES(round_value)', 'plant_delete= VALUES(plant_delete)', 'whole_delete= VALUES(whole_delete)', 'record_datetime= VALUES(record_datetime)', 'lastest_datetime= VALUES(lastest_datetime)',
+      'record_cat= VALUES(record_cat)', 'std_text= VALUES(std_text)', 'std_code= VALUES(std_code)', 'std_code_name= VALUES(std_code_name)', 'rep_code= VALUES(rep_code)', 'std_code_alt1= VALUES(std_code_alt1)',
+      'insurance_code= VALUES(insurance_code)', 'approval_cat= VALUES(approval_cat)', 'approval_cat_name= VALUES(approval_cat_name)', 'approval_name= VALUES(approval_name)', 'evaluation_class= VALUES(evaluation_class)',
+      'pack_unit_authority= VALUES(pack_unit_authority)', 'pack_unit_prod_code= VALUES(pack_unit_prod_code)', 'mat_account_group= VALUES(mat_account_group)', 'safe_stock= VALUES(safe_stock)', 'min_safe_stock= VALUES(min_safe_stock)',
+      'provided_plant= VALUES(provided_plant)',"update_by='"+req.body.handle_by+"'",'update_datetime=now()'
+    ]
+
+    req.body.extdatas.map((oneRow,i)=>{
+      let oneValueArry=[]
+      Object.keys(req.body.extdatas[i]).map(async (keyName,j)=>{
+        oneValueArry.push(req.body.extdatas[i][keyName])
+      })
+      valueArrys.push(oneValueArry)
+    })
+
+    let qryResult = await batchInsertOnDupliFunc("tb_extdata_sapzmmrten",columNamesArr,questions,valueArrys,dupStrArry)
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  })
+
+  //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
+  app.get('/adddoc_getextdatasapzmmr1010', loginCheck, async function (req, res) {
+    let qryResult = await strFunc("SELECT mat_cat, plant_code, mat_code, mat_name, mat_unit, mat_unit_name, mat_code_alt1, mat_code_alt2, mat_code_alt3, "
+    + "mat_code_alt4, mat_code_alt5, mat_code_alt6, mat_unit_alt1, mat_unit_alt1_name, mat_unit_alt1_value, mat_group, mat_ext_group, status_plants, "
+    + "status_mats_plants, max_store_level, prod_cat, prod_scrap, mrp_group, buy_group, mrp_cat, reorder_point, mrp_manager, lot_size, lot_min_size, "
+    + "lot_max_size, lot_fix, assemble_group, provide_specical, provide_cat, production_store_location, use_quater, ep_store_location, internal_production, "
+    + "intend_prodvide, leadtime_import, safe_time_indicator, safe_time, production_director, delivery_tolerance_below, delivery_tolerance_above, temp_condition, "
+    + "mat_group_pack_mat, store_condition, remained_effect, total_shelf_life, check_setting, provide_specical_cat, vendor_list, auto_po, lab_design_room, "
+    + "prod_layer_skeleton, layer1_name, layer2_name, layer3_name, layer4_name, round_value, plant_delete, whole_delete, record_datetime, lastest_datetime, "
+    + "record_cat, std_text, std_code, std_code_name, rep_code, std_code_alt1, insurance_code, approval_cat, approval_cat_name, approval_name, evaluation_class, "
+    + "pack_unit_authority, pack_unit_prod_code, mat_account_group, safe_stock, min_safe_stock, provided_plant, "
+    + "BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_extdata_sapzmmrten " + await whereClause("tb_extdata_sapzmmrten",req.query.searchKeyWord))
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  });
+
+  //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
+  app.post('/postextdataeqmsatemplate', loginCheck, async function(req,res){
+    // req.body.extdatas.map((oneRow,i)=>{
+    //   console.log(oneRow)
+    // })
+    let columNamesArr=['pr_no', 'create_datetime', 'project', 'pr_title', 'written_by', 'due_date', 'pr_state', 'date_closed', 
+    'uuid_binary', 'insert_by', 'insert_datetime', 'update_by', 'update_datetime', ]
+    let questions=['?', '?', '?', '?', '?', '?', '?', '?', 'UUID_TO_BIN(UUID())', "'"+req.body.handle_by+"'", 'now()', 'NULL', 'NULL']
+    let valueArrys=[]
+    let dupStrArry=['pr_no= VALUES(pr_no)', 'create_datetime= VALUES(create_datetime)', 'project= VALUES(project)', 'pr_title= VALUES(pr_title)',
+    'written_by= VALUES(written_by)', 'due_date= VALUES(due_date)', 'pr_state= VALUES(pr_state)', 'date_closed= VALUES(date_closed)',
+    "update_by='"+req.body.handle_by+"'", 'update_datetime=now()']
+
+    req.body.extdatas.map((oneRow,i)=>{
+      let oneValueArry=[]
+      Object.keys(req.body.extdatas[i]).map(async (keyName,j)=>{
+        oneValueArry.push(req.body.extdatas[i][keyName])
+      })
+      if (oneValueArry.length==8) valueArrys.push(oneValueArry)
+      else console.log(oneValueArry)
+    })
+
+    let qryResult = await batchInsertOnDupliFunc("tb_extdata_eqms_a_template",columNamesArr,questions,valueArrys,dupStrArry)
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  })
+  //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
+  app.get('/adddoc_getextdataeqmsatemplate', loginCheck, async function (req, res) {
+    let qryResult = await strFunc("SELECT pr_no, project, pr_title, create_datetime, written_by, due_date, pr_state, date_closed, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_extdata_eqms_a_template " + await whereClause("tb_extdata_eqms_a_template",req.query.searchKeyWord))
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  });
   //================================================================================ [공통 기능] 모든 route를 react SPA로 연결 (이 코드는 맨 아래 있어야함)
     app.get('/', function (req, res) {
       res.sendFile(path.join(__dirname, process.env.react_build_path+'index.html'));

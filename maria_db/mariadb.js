@@ -55,6 +55,20 @@ const pool = mariadb.createPool({
     }
   }
 
+  async function batchInsertOnDupliFunc (targetTable, columNamesArr, questions, valueArrys,dupStrArry) {
+    let conn;
+    try {
+      conn = await pool.getConnection();
+      conn.query('USE ' + process.env.thisDB_name);
+      const rows = await conn.batch("INSERT INTO " + targetTable + " ("+columNamesArr.join(', ')+") VALUES("+questions.join(', ')+") ON DUPLICATE KEY UPDATE "+dupStrArry.join(","), valueArrys)
+      return rows
+    } catch (err) {
+      console.log(err)
+    } finally {
+      if (conn) conn.end();
+    }
+  }
+
   async function truncateTable(truncTable){
     let conn;
     try {
@@ -97,4 +111,4 @@ const pool = mariadb.createPool({
     return clause
 }
 
-  module.exports={strFunc, insertFunc, batchInsertFunc, whereClause, truncateTable}
+  module.exports={strFunc, insertFunc, batchInsertFunc, batchInsertOnDupliFunc, whereClause, truncateTable}

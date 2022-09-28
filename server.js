@@ -635,7 +635,46 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       console.log(qryResult)
       res.json(qryResult)
     })
+   //================================================================================ [문서 기능] 문서 정보 수정
+   app.put('/puteditdocno',loginCheck,async function(req,res){
 
+    let tartgetRowSelectStr= "SELECT doc_no, req_purpose, req_user, req_team, used_pattern, used_pattern_name, start_rev_no, serial_pool, used_serial, remark FROM tb_doc_no_list WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')"
+
+    let auditTrailDataBefore= await strFunc(tartgetRowSelectStr)
+    let auditTrailDataAfter=[]
+    let auditTrailRows=[]
+
+    let setArrys=[]
+
+    Object.keys(req.body).map(async (keyName,i)=>{
+      if(keyName=="uuid_binary"){ 
+        // uuid는 업데이트할 Row 검색 조건이기 때문에 변경 안 함
+      }
+      else if(keyName=="doc_no"){
+        // doc_no는 PK이기 때문에 변경 안 함
+      }
+      else{
+        if(typeof(req.body[keyName])=="string") setArrys.push(keyName+"='"+req.body[keyName]+"'")
+        else if(typeof(req.body[keyName])=="number") setArrys.push(keyName+"="+req.body[keyName]+"")
+        else if(!req.body[keyName]) setArrys.push(keyName+"=NULL")
+      }
+    })
+
+    setArrys.push("update_datetime=now()")
+
+    console.log(req.body)
+    let qryResult = await strFunc("UPDATE tb_doc_no_list SET "+ setArrys.join(",") + " WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
+    .then(async (rowResult)=>{
+      auditTrailDataAfter = await strFunc(tartgetRowSelectStr)
+      
+      auditTrailRows.push(req.body.update_by,"'" + req.body.doc_no + "' 의 발번 정보 수정", JSON.stringify({Before:auditTrailDataBefore,After:auditTrailDataAfter}))
+      await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+
+      return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  })
+  
   //================================================================================ 
   app.get('/getmngdocno', loginCheck, async function (req, res) {
     let whereClause = "WHERE (tb_user.user_name like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_purpose like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_user like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.serial_pool like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.used_serial like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.remark like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (tb_doc_no_list.insert_datetime like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.update_datetime like '%"+req.query.searchKeyWord+"%')"
@@ -712,7 +751,10 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
    //================================================================================ [문서 기능] 문서 정보 수정
    app.put('/puteditdoc',loginCheck,async function(req,res){
-    let auditTrailDataBefore= await strFunc("SELECT doc_no, rev_no, doc_title, written_by, written_by_team, approval_date, invalid_date, qualAtt, valAtt, eqAtt, prodAtt, eqmsAtt, isprotocol, relateddoc, remark FROM tb_doc_list WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
+
+    let tartgetRowSelectStr="SELECT doc_no, rev_no, doc_title, written_by, written_by_team, approval_date, invalid_date, qualAtt, valAtt, eqAtt, prodAtt, eqmsAtt, isprotocol, relateddoc, remark FROM tb_doc_list WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')"
+
+    let auditTrailDataBefore= await strFunc(tartgetRowSelectStr)
     let auditTrailDataAfter=[]
     let auditTrailRows=[]
 
@@ -740,7 +782,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
     console.log(setArrys)
     let qryResult = await strFunc("UPDATE tb_doc_list SET "+ setArrys.join(",") + " WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
     .then(async (rowResult)=>{
-      auditTrailDataAfter = await strFunc("SELECT doc_no, rev_no, doc_title, written_by, written_by_team, approval_date, invalid_date, qualAtt, valAtt, eqAtt, prodAtt, eqmsAtt, isprotocol, relateddoc, remark FROM tb_doc_list WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
+      auditTrailDataAfter = await strFunc(tartgetRowSelectStr)
       
       auditTrailRows.push(req.body.update_by,"'" + req.body.doc_no +"("+req.body.rev_no+")" + "' 의 정보수정", JSON.stringify({Before:auditTrailDataBefore,After:auditTrailDataAfter}))
       await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
@@ -749,6 +791,26 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
     .catch((err)=>{return {success:false, result:err}})
     res.json(qryResult)
   })
+
+    //================================================================================ 
+    app.delete('/deletedoc', loginCheck, async function (req, res) {
+      let uuid_binarys=[]
+      let auditTrailRows=[]
+      req.query.targetRows.map((oneRow,i)=>{
+        let tempJsonParse=JSON.parse(oneRow)
+        console.log(tempJsonParse)
+        uuid_binarys.push("uuid_binary = UUID_TO_BIN('" + tempJsonParse.uuid_binary +"')")
+        auditTrailRows.push([tempJsonParse.delete_by,"문서정보 삭제 : '"+tempJsonParse.doc_no+"("+tempJsonParse.rev_no+") "+tempJsonParse.doc_title+"'",tempJsonParse.doc_no+"("+tempJsonParse.rev_no+") "+tempJsonParse.doc_title])
+      })
+      let qryResult = await strFunc("DELETE FROM tb_doc_list WHERE " + uuid_binarys.join(" OR "))
+      .then(async (rowResult)=>{
+        await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+        return {success:true, result:rowResult}
+      })
+      .catch((err)=>{return {success:false, result:err}})
+  
+      res.json(qryResult)
+    });
 
     //================================================================================ 
     app.get('/getmngdoc', loginCheck, async function (req, res) {

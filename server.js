@@ -710,8 +710,69 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
     res.json(qryResult)
   })
 
+   //================================================================================ [문서 기능] 문서 정보 수정
+   app.put('/puteditdoc',loginCheck,async function(req,res){
+    let auditTrailDataBefore= await strFunc("SELECT doc_no, rev_no, doc_title, written_by, written_by_team, approval_date, invalid_date, qualAtt, valAtt, eqAtt, prodAtt, eqmsAtt, isprotocol, relateddoc, remark FROM tb_doc_list WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
+    let auditTrailDataAfter=[]
+    let auditTrailRows=[]
+
+    let setArrys=[]
+
+    Object.keys(req.body).map(async (keyName,i)=>{
+      if(keyName=="uuid_binary"){ 
+        // uuid는 업데이트할 Row 검색 조건이기 때문에 변경 안 함
+      }
+      else if(keyName=="doc_no"){
+        // doc_no는 PK이기 때문에 변경 안 함
+      }
+      else if(keyName=="rev_no"){
+        // rev_no는 PK이기 때문에 변경 안 함
+      }
+      else{
+        if(typeof(req.body[keyName])=="string") setArrys.push(keyName+"='"+req.body[keyName]+"'")
+        else if(typeof(req.body[keyName])=="number") setArrys.push(keyName+"="+req.body[keyName]+"")
+        else if(!req.body[keyName]) setArrys.push(keyName+"=NULL")
+      }
+    })
+
+    setArrys.push("update_datetime=now()")
+
+    console.log(setArrys)
+    let qryResult = await strFunc("UPDATE tb_doc_list SET "+ setArrys.join(",") + " WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
+    .then(async (rowResult)=>{
+      auditTrailDataAfter = await strFunc("SELECT doc_no, rev_no, doc_title, written_by, written_by_team, approval_date, invalid_date, qualAtt, valAtt, eqAtt, prodAtt, eqmsAtt, isprotocol, relateddoc, remark FROM tb_doc_list WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
+      
+      auditTrailRows.push(req.body.update_by,"'" + req.body.doc_no +"("+req.body.rev_no+")" + "' 의 정보수정", JSON.stringify({Before:auditTrailDataBefore,After:auditTrailDataAfter}))
+      await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+
+      return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  })
+
     //================================================================================ 
     app.get('/getmngdoc', loginCheck, async function (req, res) {
+      let whereClause ="WHERE "
+      + "(tb_doc_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.rev_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.doc_title like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.written_by like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_doc_list.written_by_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.approval_date like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.invalid_date like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_doc_list.qualAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.valAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqAtt like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_doc_list.prodAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqmsAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.isprotocol like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_doc_list.relateddoc like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.remark like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_user.user_name like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_doc_list.uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (tb_doc_list.insert_datetime like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.update_datetime like '%"+req.query.searchKeyWord+"%')"
+
+      let qryResult = await strFunc("SELECT "
+      + "tb_doc_list.doc_no, tb_doc_list.rev_no, tb_doc_list.doc_title, tb_doc_list.written_by, tb_user.user_name, tb_doc_list.written_by_team, tb_doc_list.approval_date, tb_doc_list.invalid_date, tb_doc_list.remark, "
+      + "tb_doc_list.qualAtt, tb_doc_list.valAtt, tb_doc_list.eqAtt, tb_doc_list.prodAtt, tb_doc_list.eqmsAtt, tb_doc_list.isprotocol, tb_doc_list.relateddoc, "
+      + "BIN_TO_UUID(tb_doc_list.uuid_binary) AS uuid_binary,  tb_doc_list.insert_by,  tb_doc_list.insert_datetime,  tb_doc_list.update_by,  tb_doc_list.update_datetime "
+      + "FROM tb_doc_list LEFT OUTER JOIN tb_user ON tb_doc_list.written_by = tb_user.user_account " + whereClause+" ORDER BY tb_doc_list.insert_datetime DESC" )
+      .then((rowResult)=>{return {success:true, result:rowResult}})
+      .catch((err)=>{return {success:false, result:err}})
+      res.json(qryResult)
+    });
+
+    //================================================================================ 
+    app.get('/adddoc_getmngdoc', loginCheck, async function (req, res) {
       let whereClause ="WHERE "
       + "(tb_doc_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.rev_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.doc_title like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.written_by like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.written_by_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.approval_date like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.invalid_date like '%"+req.query.searchKeyWord+"%')"

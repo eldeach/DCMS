@@ -16,7 +16,7 @@ const pool = mariadb.createPool({
       const rows = await conn.query(reqQuery)
       return rows
     } catch (err) {
-      throw err;
+      console.log(err)
     } finally {
       if (conn) conn.end();
     }
@@ -80,7 +80,7 @@ const pool = mariadb.createPool({
 
       // return rows
     } catch (err) {
-      throw err;
+      console.log(err)
     } finally {
       if (conn) conn.end();
     }

@@ -1019,14 +1019,14 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
     //================================================================================ [문서 기능] 문서 정보 수정
     app.put('/putbinderimportloc',loginCheck,async function(req,res){
 
-      let tartgetRowSelectStr="SELECT binder_no, binder_loc, current_loc FROM tb_binder_list WHERE binder_no = '" + req.body.binder_no +"'"
+      let tartgetRowSelectStr="SELECT * FROM tb_binder_list WHERE binder_no = '" + req.body.binder_no +"'"
       
-      let auditTrailDataBefore= await strFunc(tartgetRowSelectStr)
+      let selectedBinder= await strFunc(tartgetRowSelectStr)
 
-      if (auditTrailDataBefore.length==1){
+      if (selectedBinder.length==1){
         let auditTrailDataAfter=[]
         let auditTrailRows=[]
-        let binder_loc = auditTrailDataBefore[0].binder_loc
+        let binder_loc = selectedBinder[0].binder_loc
         let setArrys=[]
     
         setArrys.push("current_loc='"+binder_loc+"'")
@@ -1036,14 +1036,16 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
         .then(async (rowResult)=>{
           auditTrailDataAfter = await strFunc(tartgetRowSelectStr)
           
-          auditTrailRows.push(req.body.update_by,"바인더 '" + req.body.binder_no + "' 의 입고처리", JSON.stringify({Before:auditTrailDataBefore,After:auditTrailDataAfter}))
+          auditTrailRows.push(req.body.update_by,"바인더 '" + req.body.binder_no + "' 의 입고처리", req.body.binder_no)
           await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+          await insertFunc('tb_binder_imexport',['binder_no', 'binder_title', 'binder_year', 'mng_team', 'relateddoc', 'binder_loc', 'current_loc', 'move_type', 'action_by', 'uuid_binary', 'action_datetime'],
+          ['?','?','?','?','?','?','?','?','?','UUID_TO_BIN(UUID())','now()'],[selectedBinder[0].binder_no,selectedBinder[0].binder_title,selectedBinder[0].binder_year,selectedBinder[0].mng_team,selectedBinder[0].relateddoc,selectedBinder[0].binder_loc,selectedBinder[0].current_loc,"Import",req.body.update_by])
     
           return {success:true, result:rowResult}})
         .catch((err)=>{return {success:false, result:err}})
         res.json(qryResult)
       }
-      else if(auditTrailDataBefore.length==0){
+      else if(selectedBinder.length==0){
         res.json({success:false, result:"존재하지 않는 바인더 입니다."})
       }
       else{
@@ -1053,11 +1055,11 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
   //================================================================================ [문서 기능] 문서 정보 수정
   app.put('/putbinderexportloc',loginCheck,async function(req,res){
-    let tartgetRowSelectStr="SELECT binder_no, binder_loc, current_loc FROM tb_binder_list WHERE binder_no = '" + req.body.binder_no +"'"
+    let tartgetRowSelectStr="SELECT * FROM tb_binder_list WHERE binder_no = '" + req.body.binder_no +"'"
     
-    let auditTrailDataBefore= await strFunc(tartgetRowSelectStr)
+    let selectedBinder= await strFunc(tartgetRowSelectStr)
 
-    if (auditTrailDataBefore.length==1){
+    if (selectedBinder.length==1){
       let auditTrailDataAfter=[]
       let auditTrailRows=[]
 
@@ -1070,20 +1072,32 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       .then(async (rowResult)=>{
         auditTrailDataAfter = await strFunc(tartgetRowSelectStr)
                
-        auditTrailRows.push(req.body.update_by,"바인더 '" + req.body.binder_no + "'를 "+req.body.user_name+"("+req.body.user_account+", "+req.body.user_team+"팀)님께 출고처리", JSON.stringify({Before:auditTrailDataBefore,After:auditTrailDataAfter}))
+        auditTrailRows.push(req.body.update_by,"바인더 '" + req.body.binder_no + "'를 "+req.body.user_name+"("+req.body.user_account+", "+req.body.user_team+"팀)님께 출고처리",req.body.binder_no)
         await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+        await insertFunc('tb_binder_imexport',['binder_no', 'binder_title', 'binder_year', 'mng_team', 'relateddoc', 'binder_loc', 'current_loc', 'move_type', 'action_by', 'uuid_binary', 'action_datetime'],
+          ['?','?','?','?','?','?','?','?','?','UUID_TO_BIN(UUID())','now()'],[selectedBinder[0].binder_no,selectedBinder[0].binder_title,selectedBinder[0].binder_year,selectedBinder[0].mng_team,selectedBinder[0].relateddoc,selectedBinder[0].binder_loc,selectedBinder[0].current_loc,"Export",req.body.update_by])
 
         return {success:true, result:rowResult}})
       .catch((err)=>{return {success:false, result:err}})
       res.json(qryResult)
     }
-    else if(auditTrailDataBefore.length==0){
+    else if(selectedBinder.length==0){
       res.json({success:false, result:"존재하지 않는 바인더 입니다."})
     }
     else{
       res.json({success:false, result:"알 수 없는 바인더 입니다."})
     }      
-})
+  })
+
+  //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
+  app.get('/getbindermovehistory', loginCheck, async function (req, res) {
+    let qryResult = await strFunc("SELECT binder_no, binder_title, binder_year, mng_team, relateddoc, binder_loc, current_loc, move_type, BIN_TO_UUID(uuid_binary) AS uuid_binary, action_by, action_datetime FROM tb_binder_imexport " + await whereClause("tb_binder_imexport",req.query.searchKeyWord) +" ORDER BY action_datetime DESC")
+    .then((rowResult)=>{
+      return {success:true, result:rowResult}})
+    .catch((err)=>{
+      return {success:false, result:err}})
+    res.json(qryResult)
+  });
 
     //================================================================================ 
     app.delete('/deletebinder', loginCheck, async function (req, res) {

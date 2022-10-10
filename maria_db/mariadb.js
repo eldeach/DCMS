@@ -17,6 +17,7 @@ const pool = mariadb.createPool({
       return rows
     } catch (err) {
       console.log(err)
+      return {errno:err.errno, code:err.code}
     } finally {
       if (conn) conn.end();
     }

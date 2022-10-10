@@ -95,7 +95,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
   app.get('/fail', function(req,res){ //수정중
     res.json({success : false, flashMsg : req.session.flash.error.slice(-1)[0]})
-    console.log(req.session.flash.error)
+    console.log(req.session.flash.error.slice(-1)[0])
   })
   
   app.get('/logincheck', loginCheck, function (req, res) {
@@ -118,7 +118,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
     passReqToCallback: false,
   }, function (reqID, reqPW, done) {
     console.log("verifying user account ...")
-    strFunc("SELECT * FROM tb_user WHERE user_account='"+reqID+"'")
+    strFunc("SELECT * FROM tb_groupware_user WHERE user_account='"+reqID+"'")
       .then(async (rowResult)=>{
         if (rowResult.length<1)
         {
@@ -130,12 +130,23 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
           return done(null, false, { message: "no user_account" })
         }
-        if (rowResult.length==1)
+        else if (rowResult.length==1)
         {
-          strFunc("SELECT * FROM tb_user_auth WHERE user_account='"+reqID+"'")
+          strFunc("SELECT user_account, user_auth, account_status FROM tb_groupware_user WHERE user_account='"+reqID+"'")
           .then(async (authResult)=>{
-            if(authResult.length<1){
-              console.log("This account is unvalid")
+            if(JSON.parse(authResult[0].account_status).length>0){
+              if(authResult[0].account_status.indexOf('Lock')!=(-1)){
+                console.log("This account is locked")
+
+                let auditTrailRows=[]
+                auditTrailRows.push([reqID,"잠겨있는 계정 '"+reqID+"'으로 로그인 시도",""])
+                await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+  
+                return done(null, false, { message: 'locked' })
+              }
+            }
+            else if(JSON.parse(authResult[0].user_auth).length<1){
+              console.log("This account is no auth")
 
               let auditTrailRows=[]
               auditTrailRows.push([reqID,"권한이 없는 계정 '"+reqID+"'으로 로그인 시도",""])
@@ -180,13 +191,13 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
   });
   
   passport.deserializeUser(function (user_id, done) {
-    strFunc("SELECT tb_user.user_account as user_account, tb_user.user_name as user_name, tb_user_auth.user_auth as user_auth FROM tb_user LEFT OUTER JOIN tb_user_auth ON tb_user.user_account = tb_user_auth.user_account WHERE tb_user.user_account='"+user_id+"'")
+    strFunc("SELECT * FROM tb_groupware_user WHERE user_account='"+user_id+"'")
     .then((rowResult)=>{
   
       let user_auths = []
   
-      rowResult.map((oneRow,i)=>{
-        user_auths.push(oneRow.user_auth)
+      JSON.parse(rowResult[0].user_auth).map((oneAuth,i)=>{
+        user_auths.push(oneAuth.abb)
       })
 
       done(null, {
@@ -200,7 +211,6 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
   });
   //================================================================================ [공통 기능] jwt 복호화 (개발중)
   app.get('/jwtverify', loginCheck, function(req,res){
-    console.log(req.query)
     console.log(jwt.verify(req.query.token,  process.env.jwt_secret_key))
     res.json(jwt.verify(req.query.token,  process.env.jwt_secret_key))
   })
@@ -215,102 +225,6 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
     res.json(qryResult)
   });
 
-
-  //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
-  app.get('/getmypage', loginCheck, async function (req, res) {
-    let qryResult = await strFunc("SELECT user_account, user_name, user_position, user_team, user_company, user_email, user_phone, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary FROM tb_user WHERE user_account ='"+req.query.user_account+"'")
-    .then((rowResult)=>{
-      return {success:true, result:rowResult}})
-    .catch((err)=>{
-      return {success:false, result:err}})
-    res.json(qryResult)
-  });
-
-
-  //================================================================================ [공통 기능] 계정 생성
-    app.post('/postaddaccount', loginCheck, async function(req,res){
-      let insertTable="tb_user";
-      let columNamesArr=[]
-      let questions=[]
-      let valueArrys=[]
-      let hashedPw= await bcryptHashing(req.body["user_pw"])
-
-      Object.keys(req.body).map(async (keyName,i)=>{
-        if(keyName=="user_pw"){
-          columNamesArr.push(keyName)
-          questions.push('?')
-          valueArrys.push(hashedPw)
-        }
-        else{
-          columNamesArr.push(keyName)
-          questions.push('?')
-          valueArrys.push(req.body[keyName])
-        }
-
-      })
-
-      columNamesArr.push("insert_datetime")
-      questions.push('now()')
-
-      columNamesArr.push("uuid_binary")
-      questions.push('UUID_TO_BIN(UUID())')
-
-      let auditTrailRows=[]
-      auditTrailRows.push(req.body.insert_by,"'" + req.body.user_account + "' 계정 생성",req.body.user_account)
-
-      let qryResult = await insertFunc(insertTable,columNamesArr,questions,valueArrys)
-      .then(async (rowResult)=>{
-        await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
-        return {success:true, result:rowResult}
-      })
-      .catch((err)=>{return {success:false, result:err}})
-      
-      res.json(qryResult)
-    })
-
-    async function bcryptHashing(plainPW){
-      let hashedPw = await bcrypt.hash(plainPW, saltRounds)
-      return hashedPw
-    }
-    
-  //================================================================================ [공통 기능] 계정 정보 수정
-  app.put('/putediteaccount',loginCheck,async function(req,res){
-    let auditTrailDataBefore= await strFunc("SELECT user_account, user_name, user_position, user_team, user_company, user_email,user_phone, remark FROM tb_user WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
-    let auditTrailDataAfter=[]
-    let auditTrailRows=[]
-
-    let setArrys=[]
-
-    Object.keys(req.body).map(async (keyName,i)=>{
-      if(keyName=="uuid_binary"){ 
-        // uuid는 업데이트할 Row 검색 조건이기 때문에 변경 안 함
-      }
-      else if(keyName=="user_account"){
-        // user_account는 PK이기 때문에 변경 안 함
-      }
-      else if(keyName=="user_pw"){
-        // PW 변경은 별도 기능에서 다룰 것이기 때문에 변경 안 함
-      }
-      else{
-        if(typeof(req.body[keyName])=="string") setArrys.push(keyName+"='"+req.body[keyName]+"'")
-        else if(typeof(req.body[keyName])=="number") setArrys.push(keyName+"="+req.body[keyName]+"")
-      }
-    })
-
-    setArrys.push("update_datetime=now()")
-
-    let qryResult = await strFunc("UPDATE tb_user SET "+ setArrys.join(",") + " WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
-    .then(async (rowResult)=>{
-      auditTrailDataAfter = await strFunc("SELECT user_account, user_name, user_position, user_team, user_company, user_email,user_phone, remark FROM tb_user WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
-      
-      auditTrailRows.push(req.body.update_by,"'" + req.body.user_account + "' 계정의 정보수정", JSON.stringify({Before:auditTrailDataBefore,After:auditTrailDataAfter}))
-      await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
-
-      return {success:true, result:rowResult}})
-    .catch((err)=>{return {success:false, result:err}})
-    res.json(qryResult)
-  })
-
     //================================================================================ [공통 기능] 비밀번호 수정 (uuid_binary, user_account, 변경할 pw, 받아야함)
     app.put('/resetaccountpw',loginCheck,async function(req,res){
       let setArrys=[]
@@ -322,7 +236,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       let auditTrailRows=[]
       auditTrailRows.push(req.body.reset_by,"'" + req.body.user_account + "' 계정의 비밀번호 수정",req.body.user_account)
 
-      let qryResult = await strFunc("UPDATE tb_user SET "+ setArrys.join(",") + " WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
+      let qryResult = await strFunc("UPDATE tb_groupware_user SET "+ setArrys.join(",") + " WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
       .then(async (rowResult)=>{
         await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
         return {success:true, result:rowResult}
@@ -334,7 +248,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
     //================================================================================ [공통 기능] 비밀번호 수정 (before_user_pw, after_user_pw, user_account, update_by 받아야함 (이론적으로 update_by, user_account가 동일할 것 (mypage이기 때문)
     app.put('/changepwself',loginCheck,async function(req,res){
-      let currentPwRow = await strFunc("SELECT user_pw FROM tb_user where user_account = '" + req.body.user_account + "'")
+      let currentPwRow = await strFunc("SELECT user_pw FROM tb_groupware_user where user_account = '" + req.body.user_account + "'")
       .then((rowResult)=>{return {success:true, result:rowResult}})
       .catch((err)=>{return {success:false, result:err}})
 
@@ -347,7 +261,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
           setArrys.push("user_pw='"+hasedPw+"'")
           setArrys.push("update_datetime=now()")
 
-          let qryResult = await strFunc("UPDATE tb_user SET "+ setArrys.join(",") + " where user_account = '" + req.body.user_account + "'")
+          let qryResult = await strFunc("UPDATE tb_groupware_user SET "+ setArrys.join(",") + " where user_account = '" + req.body.user_account + "'")
           .then(async (rowResult)=>{
             return {success:true, result:rowResult}
           })
@@ -370,109 +284,24 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       }
     })
 
-  //================================================================================ [공통 기능] 계정 삭제 [on Audit Trail]
-    app.delete('/deleteaccount',loginCheck,async function(req,res){
-      let auditTrailRows=[]
-      auditTrailRows.push(req.query.delete_by,"계정 '" + req.query.user_account + "' 삭제",req.query.user_account)
-
-      let qryResult = await strFunc("DELETE FROM tb_user WHERE uuid_binary = UUID_TO_BIN('" + req.query.uuid_binary +"')")
-      .then(async (rowResult)=>{
-        await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
-        return {success:true, result:rowResult}
-      })
-      .catch((err)=>{
-        if (err.text.indexOf("Cannot delete or update a parent row: a foreign key constraint fails",0)!=-1){
-          return {success:false, result:"본 데이터는 다른 테이블에서 사용하고 있기 때문에 삭제할 수 없습니다."}
-        }
-        return {success:false, result:err}
-      })
-
-      res.json(qryResult)
-    })
-  
-  //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
-      app.get('/getmngaccount', loginCheck, async function (req, res) {
-        let qryResult = await strFunc("SELECT user_account, user_name, user_position, user_team, user_company, user_email, user_phone, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_user " + await whereClause("tb_user",req.query.searchKeyWord))
-        .then((rowResult)=>{return {success:true, result:rowResult}})
-        .catch((err)=>{return {success:false, result:err}})
-        res.json(qryResult)
-    });
+    async function bcryptHashing(plainPW){
+      let hashedPw = await bcrypt.hash(plainPW, saltRounds)
+      return hashedPw
+    }
 
   //================================================================================ [공통 기능] 계정 부여된 권한 조회 (tb_user_auth에서 사용할 PK값 중 user_account 전달이 필요함) [Audit Trail 제외]
-  app.get('/edituserauth_getuser', loginCheck, async function (req, res) {
-    let qryResult = await strFunc("SELECT user_account, user_name, user_position, user_team, user_company, user_email, user_phone, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_user " + await whereClause("tb_user",req.query.searchKeyWord))
+  app.get('/getgroupwareuser', loginCheck, async function (req, res) {
+    let qryResult = await strFunc("SELECT user_account, user_name, user_position, user_team, user_company, user_email, user_phone, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_groupware_user " + await whereClause("tb_groupware_user",req.query.searchKeyWord))
     .then((rowResult)=>{return {success:true, result:rowResult}})
     .catch((err)=>{return {success:false, result:err}})
     res.json(qryResult)
   });
 
-  //================================================================================ [공통 기능] 계정 부여된 권한 조회 (tb_user_auth에서 사용할 PK값 중 user_account 전달이 필요함) [Audit Trail 제외]
-    app.get('/edituserauth_getuserauth', loginCheck, async function (req, res) {
-      let pk_user_account=await JSON.parse(req.query.targetPk).user_account
-      let qryResult
-      if(typeof(pk_user_account)!='undefined'){
-      qryResult = await strFunc("SELECT tb_user_auth.user_auth as user_auth, tb_auth.auth_description as auth_description, tb_user_auth.remark, BIN_TO_UUID(tb_user_auth.uuid_binary) AS uuid_binary, tb_user_auth.insert_by as insert_by, tb_user_auth.insert_datetime as insert_datetime FROM tb_user_auth LEFT OUTER JOIN tb_auth ON tb_user_auth.user_auth = tb_auth.user_auth WHERE tb_user_auth.user_account = '"+pk_user_account+"' AND tb_user_auth.user_auth like '%"+req.query.searchKeyWord+"%'")
-      .then((rowResult)=>{return {success:true, result:rowResult}})
-      .catch((err)=>{return {success:false, result:err}})
-      }
-      res.json(qryResult)
-  });
-
-  //================================================================================ [공통 기능] 계정 권한 부여 (tb_user_auth에서 PK로 사용할 user_account, user_auth 값 전달이 필요함) [on Audit Trail]
-  app.post('/edituserauth_adduserauth', loginCheck, async function (req, res) {
-    let addRows=[]
-    let auditTrailRows=[]
-    req.body.targetRows.map((oneTarget,i)=>{
-      addRows.push([oneTarget.user_account, oneTarget.user_auth, oneTarget.insert_by])
-      auditTrailRows.push([oneTarget.insert_by,oneTarget.user_account+"계정에 권한 추가",oneTarget.user_auth])
-    })
-    let qryResult = await batchInsertFunc('tb_user_auth',['user_account', 'user_auth', 'insert_by', 'insert_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],addRows,false)
-    .then(async (rowResult)=>{
-      await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
-      return {success:true, result:rowResult}
-    })
-    .catch((err)=>{return {success:false, result:err}})
-    
-    res.json(qryResult)
-  });
-
-  //================================================================================ [공통 기능] 계정 부여된 권한 삭제 (tb_user_auth에서 사용할 uuid_binary 값 전달이 필요함) [on Audit Trail]
-    app.delete('/edituserauth_deleteuserauth', loginCheck, async function (req, res) {
-      let uuid_binarys=[]
-      let auditTrailRows=[]
-      req.query.targetRows.map((oneRow,i)=>{
-        let tempJsonParse=JSON.parse(oneRow)
-        uuid_binarys.push("uuid_binary = UUID_TO_BIN('" + tempJsonParse.uuid_binary +"')")
-        auditTrailRows.push([tempJsonParse.delete_by,tempJsonParse.user_account+"의 권한 삭제",tempJsonParse.user_auth])
-      })
-      let qryResult = await strFunc("DELETE FROM tb_user_auth WHERE " + uuid_binarys.join(" OR "))
-      .then(async (rowResult)=>{
-        await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
-        return {success:true, result:rowResult}
-      })
-      .catch((err)=>{return {success:false, result:err}})
-
-      res.json(qryResult)
-  });
-
-  //================================================================================ [공통 기능] 계정 미부여된 권한 조회 (tb_user_auth에서 사용할 PK값 중 user_account 전달이 필요함 [Audit Trail 제외]
-  app.get('/edituserauth_getusernoauth', loginCheck, async function (req, res) {
-    let pk_user_account=await JSON.parse(req.query.targetPk).user_account
-
-    let qryResult
-    if(typeof(pk_user_account)!='undefined'){
-      qryResult = await strFunc("SELECT tb_auth.user_auth, tb_auth.auth_description, tb_auth.remark, BIN_TO_UUID(tb_auth.uuid_binary) as uuid_binary FROM (SELECT * FROM tb_user_auth WHERE user_account = '"+pk_user_account+"'"+ ") tb_user_auth_target RIGHT OUTER JOIN tb_auth ON tb_user_auth_target.user_auth = tb_auth.user_auth WHERE user_account IS null AND tb_auth.user_auth like '%"+req.query.searchKeyWord+"%'")
-      .then((rowResult)=>{return {success:true, result:rowResult}})
-      .catch((err)=>{return {success:false, result:err}})
-    }
-    res.json(qryResult)
-});
-
   //================================================================================ [공통 기능] 전자서명 (현재 사용자 & 패스워드만 확인해줌) [Audit Trail 제외]
   app.get('/signpw', loginCheck, async function (req, res) {
     let user_account=req.query.user_account
     let user_pw =req.query.user_pw
-    let qryResult = await strFunc("SELECT user_pw FROM tb_user where user_account = '" + req.query.user_account + "'")
+    let qryResult = await strFunc("SELECT user_pw FROM tb_groupware_user where user_account = '" + req.query.user_account + "'")
     .then((rowResult)=>{return {success:true, result:rowResult}})
     .catch((err)=>{return {success:false, result:err}})
     if(qryResult.result.length=1){
@@ -487,14 +316,6 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       res.json({signStat:false, msg:"유일한 계정이 확인되지 않습니다."})
     }
 });
-
-  //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
-  app.post('/duplicatedaccountCheck', loginCheck, async function(req,res){
-    let qryResult = await strFunc("SELECT * FROM tb_user WHERE user_account='"+req.body.user_account+"'")
-    .then((rowResult)=>{return {success:true, result:rowResult}})
-    .catch((err)=>{return {success:false, result:err}})
-    res.json(qryResult)
-  })
 
   //================================================================================ Table의 UUID 값 때문인지  "TypeError: Do not know how to serialize a BigInt" 방지용
   BigInt.prototype.toJSON = function() {       
@@ -563,8 +384,6 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
     setArrys.push("update_datetime=now()")
 
-    console.log(req.body)
-    console.log(setArrys)
     let qryResult = await strFunc("UPDATE tb_doc_no_pattern SET "+ setArrys.join(",") + " WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
     .then(async (rowResult)=>{
       auditTrailDataAfter = await strFunc(tartgetRowSelectStr)
@@ -696,11 +515,40 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       })
       .catch((err)=>{return {success:false, result:err}})
 
-      console.log("audit result : ")
-      console.log(auditTrailRows)
-      console.log(qryResult)
       res.json(qryResult)
     })
+
+    //================================================================================ [공통 기능] 계정 생성
+    app.post('/postadddocnomanual', loginCheck, async function(req,res){
+      let insertTable="tb_doc_no_list";
+      // =============== tb_doc_no_list 및 Audit Trail 새 Record 생성
+      let docNoList=[]
+      let addRows=[]
+      let auditTrailRows=[]
+      for(let i =0;i<req.body.docNos.length;i++ ){
+        let tempDocNo = req.body.docNos[i]
+        addRows.push([tempDocNo, req.body.req_purpose, req.body.req_user,req.body.req_team, "패턴없음(수동생성)", "패턴없음(수동생성)", 0, "(수동생성)",0,req.body.remark,req.body.insert_by])
+        docNoList.push(tempDocNo)
+        auditTrailRows.push([req.body.insert_by,"문서번호 생성 : '" + tempDocNo + "'",tempDocNo])
+      }
+
+      let qryResult = await batchInsertFunc(insertTable,['doc_no', 'req_purpose', 'req_user', 'req_team', 'used_pattern', 'used_pattern_name', 'start_rev_no', 'serial_pool', 'used_serial', 'remark', 'insert_by', 'insert_datetime', 'uuid_binary'], ['?','?','?','?','?','?','?','?','?','?','?','now()','UUID_TO_BIN(UUID())'],addRows,false)
+      .then(async (rowResult)=>{
+        await batchInsertFunc("tb_audit_trail",['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+        return {success:true, result:docNoList}
+      })
+      .catch((err)=>{return {success:false, result:err}})
+
+      res.json(qryResult)
+    })
+    //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
+    app.post('/dupcheckdocnomanual', loginCheck, async function(req,res){
+      let qryResult = await strFunc("SELECT * FROM tb_doc_no_list WHERE doc_no='"+req.body.doc_no+"'")
+      .then((rowResult)=>{return {success:true, result:rowResult}})
+      .catch((err)=>{return {success:false, result:err}})
+      res.json(qryResult)
+    })
+
    //================================================================================ [문서 기능] 문서 정보 수정
    app.put('/puteditdocno',loginCheck,async function(req,res){
 
@@ -728,7 +576,6 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
     setArrys.push("update_datetime=now()")
 
-    console.log(req.body)
     let qryResult = await strFunc("UPDATE tb_doc_no_list SET "+ setArrys.join(",") + " WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
     .then(async (rowResult)=>{
       auditTrailDataAfter = await strFunc(tartgetRowSelectStr)
@@ -743,8 +590,17 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
   
   //================================================================================ 
   app.get('/getmngdocno', loginCheck, async function (req, res) {
-    let whereClause = "WHERE (tb_user.user_name like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_purpose like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_user like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.serial_pool like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.used_serial like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.remark like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (tb_doc_no_list.insert_datetime like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.update_datetime like '%"+req.query.searchKeyWord+"%')"
-    let qryResult = await strFunc("SELECT tb_doc_no_list.doc_no, tb_doc_no_list.req_purpose, tb_doc_no_list.req_user, tb_user.user_name, tb_doc_no_list.req_team, tb_doc_no_list.used_pattern, tb_doc_no_list.used_pattern_name, tb_doc_no_list.start_rev_no, doclist.last_rev_no, doclist.count_used, tb_doc_no_list.serial_pool, tb_doc_no_list.used_serial, tb_doc_no_list.remark, BIN_TO_UUID(tb_doc_no_list.uuid_binary) AS uuid_binary, tb_doc_no_list.insert_by, tb_doc_no_list.insert_datetime, tb_doc_no_list.update_by, tb_doc_no_list.update_datetime FROM tb_doc_no_list LEFT OUTER JOIN tb_user ON tb_doc_no_list.req_user = tb_user.user_account LEFT OUTER JOIN (SELECT doc_no, MAX(rev_no) AS last_rev_no, COUNT(doc_no) as count_used FROM tb_doc_list GROUP BY doc_no) AS doclist ON doclist.doc_no = tb_doc_no_list.doc_no " + whereClause +  " ORDER BY tb_doc_no_list.insert_datetime DESC")
+    let whereClause = "WHERE (tb_groupware_user.user_name like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_purpose like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_user like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.serial_pool like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.used_serial like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.remark like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (tb_doc_no_list.insert_datetime like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.update_datetime like '%"+req.query.searchKeyWord+"%')"
+    let qryResult = await strFunc("SELECT tb_doc_no_list.doc_no, tb_doc_no_list.req_purpose, tb_doc_no_list.req_user, tb_groupware_user.user_name, tb_doc_no_list.req_team, tb_doc_no_list.used_pattern, tb_doc_no_list.used_pattern_name, tb_doc_no_list.start_rev_no, doclist.last_rev_no, doclist.count_used, tb_doc_no_list.serial_pool, tb_doc_no_list.used_serial, tb_doc_no_list.remark, BIN_TO_UUID(tb_doc_no_list.uuid_binary) AS uuid_binary, tb_doc_no_list.insert_by, tb_doc_no_list.insert_datetime, tb_doc_no_list.update_by, tb_doc_no_list.update_datetime FROM tb_doc_no_list LEFT OUTER JOIN tb_groupware_user ON tb_doc_no_list.req_user = tb_groupware_user.user_account LEFT OUTER JOIN (SELECT doc_no, MAX(rev_no) AS last_rev_no, COUNT(doc_no) as count_used FROM tb_doc_list GROUP BY doc_no) AS doclist ON doclist.doc_no = tb_doc_no_list.doc_no " + whereClause +  " ORDER BY tb_doc_no_list.insert_datetime DESC")
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  });
+
+  //================================================================================ 
+  app.get('/getmydocno', loginCheck, async function (req, res) {
+    let whereClause = "WHERE (tb_doc_no_list.req_user like '%"+req.query.user_account+"%') AND ((tb_groupware_user.user_name like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_purpose like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_user like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.serial_pool like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.used_serial like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.remark like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (tb_doc_no_list.insert_datetime like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.update_datetime like '%"+req.query.searchKeyWord+"%'))"
+    let qryResult = await strFunc("SELECT tb_doc_no_list.doc_no, tb_doc_no_list.req_purpose, tb_doc_no_list.req_user, tb_groupware_user.user_name, tb_doc_no_list.req_team, tb_doc_no_list.used_pattern, tb_doc_no_list.used_pattern_name, tb_doc_no_list.start_rev_no, doclist.last_rev_no, doclist.count_used, tb_doc_no_list.serial_pool, tb_doc_no_list.used_serial, tb_doc_no_list.remark, BIN_TO_UUID(tb_doc_no_list.uuid_binary) AS uuid_binary, tb_doc_no_list.insert_by, tb_doc_no_list.insert_datetime, tb_doc_no_list.update_by, tb_doc_no_list.update_datetime FROM tb_doc_no_list LEFT OUTER JOIN tb_groupware_user ON tb_doc_no_list.req_user = tb_groupware_user.user_account LEFT OUTER JOIN (SELECT doc_no, MAX(rev_no) AS last_rev_no, COUNT(doc_no) as count_used FROM tb_doc_list GROUP BY doc_no) AS doclist ON doclist.doc_no = tb_doc_no_list.doc_no " + whereClause +  " ORDER BY tb_doc_no_list.insert_datetime DESC")
     .then((rowResult)=>{return {success:true, result:rowResult}})
     .catch((err)=>{return {success:false, result:err}})
     res.json(qryResult)
@@ -762,18 +618,20 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
     let qryResult = await strFunc("DELETE FROM tb_doc_no_list WHERE " + uuid_binarys.join(" OR "))
     .then(async (rowResult)=>{
       await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
-      return {success:true, result:rowResult}
+      if(!rowResult.errno) return {success:true, result:rowResult}
+      else return {success:false, result:rowResult}
     })
     .catch((err)=>{return {success:false, result:err}})
 
+    console.log(qryResult)
     res.json(qryResult)
   });
 
   //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
   app.get('/adddoc_getmngdocno', loginCheck, async function (req, res) {
-    console.log(req.query.searchKeyWord)
-    let whereClause = "WHERE (tb_user.user_name like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_purpose like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_user like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.serial_pool like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.used_serial like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.remark like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (tb_doc_no_list.insert_datetime like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.update_datetime like '%"+req.query.searchKeyWord+"%')"
-    let qryResult = await strFunc("SELECT tb_doc_no_list.doc_no, tb_doc_no_list.req_purpose, tb_doc_no_list.req_user, tb_user.user_name, tb_doc_no_list.req_team, tb_doc_no_list.used_pattern, tb_doc_no_list.used_pattern_name, tb_doc_no_list.start_rev_no, doclist.last_rev_no, doclist.count_used, tb_doc_no_list.serial_pool, tb_doc_no_list.used_serial, tb_doc_no_list.remark, BIN_TO_UUID(tb_doc_no_list.uuid_binary) AS uuid_binary, tb_doc_no_list.insert_by, tb_doc_no_list.insert_datetime, tb_doc_no_list.update_by, tb_doc_no_list.update_datetime FROM tb_doc_no_list LEFT OUTER JOIN tb_user ON tb_doc_no_list.req_user = tb_user.user_account LEFT OUTER JOIN (SELECT doc_no, MAX(rev_no) AS last_rev_no, COUNT(doc_no) as count_used FROM tb_doc_list GROUP BY doc_no) AS doclist ON doclist.doc_no = tb_doc_no_list.doc_no " + whereClause +  " ORDER BY tb_doc_no_list.insert_datetime DESC")
+
+    let whereClause = "WHERE (tb_groupware_user.user_name like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_purpose like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_user like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.req_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.serial_pool like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.used_serial like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.remark like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (tb_doc_no_list.insert_datetime like '%"+req.query.searchKeyWord+"%') OR (tb_doc_no_list.update_datetime like '%"+req.query.searchKeyWord+"%')"
+    let qryResult = await strFunc("SELECT tb_doc_no_list.doc_no, tb_doc_no_list.req_purpose, tb_doc_no_list.req_user, tb_groupware_user.user_name, tb_doc_no_list.req_team, tb_doc_no_list.used_pattern, tb_doc_no_list.used_pattern_name, tb_doc_no_list.start_rev_no, doclist.last_rev_no, doclist.count_used, tb_doc_no_list.serial_pool, tb_doc_no_list.used_serial, tb_doc_no_list.remark, BIN_TO_UUID(tb_doc_no_list.uuid_binary) AS uuid_binary, tb_doc_no_list.insert_by, tb_doc_no_list.insert_datetime, tb_doc_no_list.update_by, tb_doc_no_list.update_datetime FROM tb_doc_no_list LEFT OUTER JOIN tb_groupware_user ON tb_doc_no_list.req_user = tb_groupware_user.user_account LEFT OUTER JOIN (SELECT doc_no, MAX(rev_no) AS last_rev_no, COUNT(doc_no) as count_used FROM tb_doc_list GROUP BY doc_no) AS doclist ON doclist.doc_no = tb_doc_no_list.doc_no " + whereClause +  " ORDER BY tb_doc_no_list.insert_datetime DESC")
     .then((rowResult)=>{return {success:true, result:rowResult}})
     .catch((err)=>{return {success:false, result:err}})
     res.json(qryResult)
@@ -864,19 +722,40 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
     //================================================================================ 
     app.delete('/deletedoc', loginCheck, async function (req, res) {
       let uuid_binarys=[]
+      let rejectList=[]
       let auditTrailRows=[]
-      req.query.targetRows.map((oneRow,i)=>{
-        let tempJsonParse=JSON.parse(oneRow)
-        console.log(tempJsonParse)
-        uuid_binarys.push("uuid_binary = UUID_TO_BIN('" + tempJsonParse.uuid_binary +"')")
-        auditTrailRows.push([tempJsonParse.delete_by,"문서정보 삭제 : '"+tempJsonParse.doc_no+"("+tempJsonParse.rev_no+") "+tempJsonParse.doc_title+"'",tempJsonParse.doc_no+"("+tempJsonParse.rev_no+") "+tempJsonParse.doc_title])
-      })
-      let qryResult = await strFunc("DELETE FROM tb_doc_list WHERE " + uuid_binarys.join(" OR "))
-      .then(async (rowResult)=>{
-        await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
-        return {success:true, result:rowResult}
-      })
-      .catch((err)=>{return {success:false, result:err}})
+
+      for(let i=0;i<req.query.targetRows.length;i++){
+        let tempJsonParse=JSON.parse(req.query.targetRows[i])
+        let findInBinderStr='SELECT * FROM tb_binder_list WHERE (relateddoc like '+'"%doc_no%:%'+tempJsonParse.doc_no+'%,%rev_no%:%'+tempJsonParse.rev_no+'%")'
+        console.log(findInBinderStr)
+        let findInBinder = await strFunc(findInBinderStr)
+        console.log(tempJsonParse.doc_no+"("+tempJsonParse.rev_no+") 담은 바인더 찾은 갯수 : "+findInBinder.length)
+        if(findInBinder.length==0){
+          uuid_binarys.push("uuid_binary = UUID_TO_BIN('" + tempJsonParse.uuid_binary +"')")
+          auditTrailRows.push([tempJsonParse.delete_by,"문서정보 삭제 : '"+tempJsonParse.doc_no+"("+tempJsonParse.rev_no+") "+tempJsonParse.doc_title+"'",tempJsonParse.doc_no+"("+tempJsonParse.rev_no+") "+tempJsonParse.doc_title])
+        }
+        else{
+          rejectList.push(tempJsonParse.doc_no+' ('+tempJsonParse.rev_no+') "'+ tempJsonParse.doc_title+'"')
+          auditTrailRows.push([tempJsonParse.delete_by,"시스템에 의한 문서정보 삭제 거부 : '"+tempJsonParse.doc_no+"("+tempJsonParse.rev_no+") "+tempJsonParse.doc_title+"'",tempJsonParse.doc_no+"("+tempJsonParse.rev_no+") "+tempJsonParse.doc_title])
+        }
+      }
+      let qryResult
+      console.log("제거할 데이터 갯수 :"+uuid_binarys.length)
+      console.log("제거 거부된 데이터 갯수 :"+rejectList.length)
+      console.log(rejectList)
+      if(uuid_binarys.length>0){
+        qryResult = await strFunc("DELETE FROM tb_doc_list WHERE " + uuid_binarys.join(" OR "))
+        .then(async (rowResult)=>{
+          await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+          return {success:true, result:rowResult, rejected:rejectList}
+        })
+        .catch((err)=>{return {success:false, result:err, rejected:rejectList}})
+      }
+      else{
+        qryResult = {success:false, result:"삭제할 수 있는 데이터가 없습니다.", rejected:rejectList}
+      }
+
   
       res.json(qryResult)
     });
@@ -889,14 +768,14 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       + " OR (tb_doc_list.qualAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.valAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.locAtt like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.prodAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqmsAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.isprotocol like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.relateddoc like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.remark like '%"+req.query.searchKeyWord+"%')"
-      + " OR (tb_user.user_name like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_groupware_user.user_name like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (tb_doc_list.insert_datetime like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.update_datetime like '%"+req.query.searchKeyWord+"%')"
 
       let qryResult = await strFunc("SELECT "
-      + "tb_doc_list.doc_no, tb_doc_list.rev_no, tb_doc_list.doc_title, tb_doc_list.written_by, tb_user.user_name, tb_doc_list.written_by_team, tb_doc_list.approval_date, tb_doc_list.invalid_date, tb_doc_list.remark, "
+      + "tb_doc_list.doc_no, tb_doc_list.rev_no, tb_doc_list.doc_title, tb_doc_list.written_by, tb_groupware_user.user_name, tb_doc_list.written_by_team, tb_doc_list.approval_date, tb_doc_list.invalid_date, tb_doc_list.remark, "
       + "tb_doc_list.qualAtt, tb_doc_list.valAtt, tb_doc_list.eqAtt, tb_doc_list.locAtt, tb_doc_list.prodAtt, tb_doc_list.eqmsAtt, tb_doc_list.isprotocol, tb_doc_list.relateddoc, "
       + "BIN_TO_UUID(tb_doc_list.uuid_binary) AS uuid_binary,  tb_doc_list.insert_by,  tb_doc_list.insert_datetime,  tb_doc_list.update_by,  tb_doc_list.update_datetime "
-      + "FROM tb_doc_list LEFT OUTER JOIN tb_user ON tb_doc_list.written_by = tb_user.user_account " + whereClause+" ORDER BY tb_doc_list.insert_datetime DESC" )
+      + "FROM tb_doc_list LEFT OUTER JOIN tb_groupware_user ON tb_doc_list.written_by = tb_groupware_user.user_account " + whereClause+" ORDER BY tb_doc_list.insert_datetime DESC" )
       .then((rowResult)=>{return {success:true, result:rowResult}})
       .catch((err)=>{return {success:false, result:err}})
       res.json(qryResult)
@@ -910,14 +789,14 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       + " OR (tb_doc_list.qualAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.valAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.locAtt like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.prodAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqmsAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.isprotocol like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.relateddoc like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.remark like '%"+req.query.searchKeyWord+"%')"
-      + " OR (tb_user.user_name like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_groupware_user.user_name like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (tb_doc_list.insert_datetime like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.update_datetime like '%"+req.query.searchKeyWord+"%')"
 
       let qryResult = await strFunc("SELECT "
-      + "tb_doc_list.doc_no, tb_doc_list.rev_no, tb_doc_list.doc_title, tb_doc_list.written_by, tb_user.user_name, tb_doc_list.written_by_team, tb_doc_list.approval_date, tb_doc_list.invalid_date, tb_doc_list.remark, "
+      + "tb_doc_list.doc_no, tb_doc_list.rev_no, tb_doc_list.doc_title, tb_doc_list.written_by, tb_groupware_user.user_name, tb_doc_list.written_by_team, tb_doc_list.approval_date, tb_doc_list.invalid_date, tb_doc_list.remark, "
       + "tb_doc_list.qualAtt, tb_doc_list.valAtt, tb_doc_list.eqAtt, tb_doc_list.locAtt, tb_doc_list.prodAtt, tb_doc_list.eqmsAtt, tb_doc_list.isprotocol, tb_doc_list.relateddoc, "
       + "BIN_TO_UUID(tb_doc_list.uuid_binary) AS uuid_binary,  tb_doc_list.insert_by,  tb_doc_list.insert_datetime,  tb_doc_list.update_by,  tb_doc_list.update_datetime "
-      + "FROM tb_doc_list LEFT OUTER JOIN tb_user ON tb_doc_list.written_by = tb_user.user_account " + whereClause+" ORDER BY tb_doc_list.insert_datetime DESC" )
+      + "FROM tb_doc_list LEFT OUTER JOIN tb_groupware_user ON tb_doc_list.written_by = tb_groupware_user.user_account " + whereClause+" ORDER BY tb_doc_list.insert_datetime DESC" )
       .then((rowResult)=>{return {success:true, result:rowResult}})
       .catch((err)=>{return {success:false, result:err}})
       res.json(qryResult)
@@ -926,7 +805,6 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
   //================================================================================ [공통 기능] 계정 생성
   app.post('/postaddbinder', loginCheck, async function(req,res){
 
-    console.log(req.body)
     let insertTable="tb_binder_list";
     let columNamesArr=[]
     let questions=[]
@@ -934,7 +812,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
     let maxBinderSerial = await strFunc("SELECT MAX(used_serial) as max_serial FROM "+insertTable+" WHERE binder_keyword = '" +req.body.binder_keyword+"'")
     let newBinderSerial
-    console.log(maxBinderSerial[0].max_serial)
+
     if(!maxBinderSerial[0].max_serial) newBinderSerial = 1
     else newBinderSerial = (parseInt(maxBinderSerial[0].max_serial)+1)
 
@@ -1039,7 +917,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
           auditTrailRows.push(req.body.update_by,"바인더 '" + req.body.binder_no + "' 의 입고처리", req.body.binder_no)
           await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
           await insertFunc('tb_binder_imexport',['binder_no', 'binder_title', 'binder_year', 'mng_team', 'relateddoc', 'binder_loc', 'current_loc', 'move_type', 'action_by', 'uuid_binary', 'action_datetime'],
-          ['?','?','?','?','?','?','?','?','?','UUID_TO_BIN(UUID())','now()'],[selectedBinder[0].binder_no,selectedBinder[0].binder_title,selectedBinder[0].binder_year,selectedBinder[0].mng_team,selectedBinder[0].relateddoc,selectedBinder[0].binder_loc,selectedBinder[0].current_loc,"Import",req.body.update_by])
+          ['?','?','?','?','?','?','?','?','?','UUID_TO_BIN(UUID())','now()'],[selectedBinder[0].binder_no,selectedBinder[0].binder_title,selectedBinder[0].binder_year,selectedBinder[0].mng_team,selectedBinder[0].relateddoc,selectedBinder[0].binder_loc,selectedBinder[0].binder_loc,"Import",req.body.update_by])
     
           return {success:true, result:rowResult}})
         .catch((err)=>{return {success:false, result:err}})
@@ -1072,13 +950,15 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       .then(async (rowResult)=>{
         auditTrailDataAfter = await strFunc(tartgetRowSelectStr)
                
-        auditTrailRows.push(req.body.update_by,"바인더 '" + req.body.binder_no + "'를 "+req.body.user_name+"("+req.body.user_account+", "+req.body.user_team+"팀)님께 출고처리",req.body.binder_no)
+        auditTrailRows.push(req.body.update_by,"바인더 '" + req.body.binder_no + "'를 "+req.body.current_loc.user_name+"("+req.body.current_loc.user_account+", "+req.body.current_loc.user_team+")님께 출고처리",req.body.binder_no)
         await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
         await insertFunc('tb_binder_imexport',['binder_no', 'binder_title', 'binder_year', 'mng_team', 'relateddoc', 'binder_loc', 'current_loc', 'move_type', 'action_by', 'uuid_binary', 'action_datetime'],
-          ['?','?','?','?','?','?','?','?','?','UUID_TO_BIN(UUID())','now()'],[selectedBinder[0].binder_no,selectedBinder[0].binder_title,selectedBinder[0].binder_year,selectedBinder[0].mng_team,selectedBinder[0].relateddoc,selectedBinder[0].binder_loc,selectedBinder[0].current_loc,"Export",req.body.update_by])
+          ['?','?','?','?','?','?','?','?','?','UUID_TO_BIN(UUID())','now()'],[selectedBinder[0].binder_no,selectedBinder[0].binder_title,selectedBinder[0].binder_year,selectedBinder[0].mng_team,selectedBinder[0].relateddoc,selectedBinder[0].binder_loc,JSON.stringify(req.body.current_loc),"Export",req.body.update_by])
 
         return {success:true, result:rowResult}})
-      .catch((err)=>{return {success:false, result:err}})
+      .catch((err)=>{
+        console.log(err)
+        return {success:false, result:err}})
       res.json(qryResult)
     }
     else if(selectedBinder.length==0){
@@ -1106,7 +986,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       req.query.targetRows.map((oneRow,i)=>{
         let tempJsonParse=JSON.parse(oneRow)
         uuid_binarys.push("uuid_binary = UUID_TO_BIN('" + tempJsonParse.uuid_binary +"')")
-        auditTrailRows.push([tempJsonParse.delete_by,"바인더 정보 삭제 : '"+tempJsonParse.binder_no+"'",{binder_no:tempJsonParse.binder_no, binder_title:tempJsonParse.binder_title}])
+        auditTrailRows.push([tempJsonParse.delete_by,"바인더 정보 삭제 : '"+tempJsonParse.binder_no+"'",{binder_no:tempJsonParse.binder_no, binder_title:tempJsonParse.binder_title, relateddoc:tempJsonParse.relateddoc}])
       })
       let qryResult = await strFunc("DELETE FROM tb_binder_list WHERE " + uuid_binarys.join(" OR "))
       .then(async (rowResult)=>{
@@ -1118,12 +998,25 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       res.json(qryResult)
     });
 
-    //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
-    app.get('/getmngbinder', loginCheck, async function (req, res) {//
-      let qryResult = await strFunc("SELECT binder_no, binder_title, binder_year, mng_team, relateddoc, binder_loc, current_loc, binder_keyword, used_serial, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_binder_list " + await whereClause("tb_binder_list",req.query.searchKeyWord))
-      .then((rowResult)=>{return {success:true, result:rowResult}})
-      .catch((err)=>{return {success:false, result:err}})
-      res.json(qryResult)
+  //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
+  app.get('/getmngbinder', loginCheck, async function (req, res) {//
+    let qryResult = await strFunc("SELECT binder_no, binder_title, binder_year, mng_team, relateddoc, binder_loc, current_loc, binder_keyword, used_serial, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_binder_list " + await whereClause("tb_binder_list",req.query.searchKeyWord))
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  });
+
+  //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
+  app.get('/getmyimexbinderhistory', loginCheck, async function (req, res) {//
+    
+    let whereClauseStr = "WHERE (current_loc like '%"+req.query.user_account+"%') AND ((binder_no like '%"+req.query.searchKeyWord+"%') OR (binder_title like '%"+req.query.searchKeyWord+"%') OR (binder_year like '%"+req.query.searchKeyWord+"%') OR (mng_team like '%"+req.query.searchKeyWord+"%') OR (relateddoc like '%"+req.query.searchKeyWord+"%') OR (binder_loc like '%"+req.query.searchKeyWord+"%') OR (current_loc like '%"+req.query.searchKeyWord+"%') OR (binder_keyword like '%"+req.query.searchKeyWord+"%') OR (used_serial like '%"+req.query.searchKeyWord+"%') OR (remark like '%"+req.query.searchKeyWord+"%') OR (uuid_binary = UUID_TO_BIN('"+req.query.searchKeyWord+"')) OR (insert_datetime like '%"+req.query.searchKeyWord+"%') OR (update_datetime like '%"+req.query.searchKeyWord+"%'))"
+    
+    console.log(req.query.user_account)
+    console.log(whereClauseStr)
+    let qryResult = await strFunc("SELECT binder_no, binder_title, binder_year, mng_team, relateddoc, binder_loc, current_loc, binder_keyword, used_serial, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_binder_list " + whereClauseStr)
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
   });
   //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
   app.post('/postextdatatmms', loginCheck, async function(req,res){
@@ -1239,9 +1132,6 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
   //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
   app.post('/postextdataeqmsatemplate', loginCheck, async function(req,res){
-    // req.body.extdatas.map((oneRow,i)=>{
-    //   console.log(oneRow)
-    // })
     let columNamesArr=['pr_no', 'create_datetime', 'project', 'pr_title', 'written_by', 'due_date', 'pr_state', 'date_closed', 
     'uuid_binary', 'insert_by', 'insert_datetime', 'update_by', 'update_datetime', ]
     let questions=['?', '?', '?', '?', '?', '?', '?', '?', 'UUID_TO_BIN(UUID())', "'"+req.body.handle_by+"'", 'now()', 'NULL', 'NULL']
@@ -1267,9 +1157,6 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
     //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
     app.post('/postextdatatmmslocation', loginCheck, async function(req,res){
-      // req.body.extdatas.map((oneRow,i)=>{
-      //   console.log(oneRow)
-      // })
       let columNamesArr=[ 'order_no', 'location_name', 'costcenter', 'location_code', 'location_l', 'location_order_value', 'location_status',
       'uuid_binary', 'insert_by', 'insert_datetime', 'update_by', 'update_datetime',]
       let questions=['?', '?', '?', '?', '?', '?', '?', 'UUID_TO_BIN(UUID())', "'"+req.body.handle_by+"'", 'now()', 'NULL', 'NULL']
@@ -1292,6 +1179,74 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       .catch((err)=>{return {success:false, result:err}})
       res.json(qryResult)
     })
+
+  //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
+  app.post('/postextdatagroupwareaccount', loginCheck, async function(req,res){
+    let columNamesArr=['user_account', 'user_pw', 'user_name', 'user_position', 'user_team', 'user_company', 'user_email', 'user_phone', 'user_auth',	'account_status', 'uuid_binary', 'insert_by', 'insert_datetime', 'update_by', 'update_datetime'] 
+    let questions=['?', '?', '?', '?', '?', '?', '?', '?', '?', '?', 'UUID_TO_BIN(UUID())', "'"+req.body.handle_by+"'", 'now()', 'NULL', 'NULL']
+    let valueArrys=[]
+    let dupStrArry=['user_name=VALUES(user_name)', 'user_position=VALUES(user_position)', 
+    'user_team=VALUES(user_team)', 'user_company=VALUES(user_company)', 'user_email=VALUES(user_email)', 'user_phone=VALUES(user_phone)', "update_by='"+req.body.handle_by+"'", 'update_datetime=now()']
+
+    req.body.extdatas.map((oneRow,i)=>{
+      let oneValueArry=[]
+      Object.keys(req.body.extdatas[i]).map(async (keyName,j)=>{
+        oneValueArry.push(req.body.extdatas[i][keyName])
+      })
+      valueArrys.push(oneValueArry)
+    })
+
+    let qryResult = await batchInsertOnDupliFunc("tb_groupware_user",columNamesArr,questions,valueArrys,dupStrArry)
+    .then((rowResult)=>{return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  })
+    //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
+    app.get('/getmnguser', loginCheck, async function (req, res) {
+      let qryResult = await strFunc("SELECT user_account, user_name, user_position, user_team, user_company, user_email, user_phone, user_auth, account_status, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_groupware_user " + await whereClause("tb_groupware_user",req.query.searchKeyWord))
+      .then((rowResult)=>{return {success:true, result:rowResult}})
+      .catch((err)=>{return {success:false, result:err}})
+      res.json(qryResult)
+  });
+   //================================================================================ [문서 기능] 문서 정보 수정
+   app.put('/putedituserinfo',loginCheck,async function(req,res){
+
+    let tartgetRowSelectStr= "SELECT * FROM tb_groupware_user WHERE user_account = '" + req.body.user_account +"'"
+
+    let auditTrailDataBefore= await strFunc(tartgetRowSelectStr)
+    let auditTrailDataAfter=[]
+    let auditTrailRows=[]
+
+    let setArrys=[]
+
+    setArrys.push("remark='"+req.body.remark+"'")
+    setArrys.push("user_auth='"+req.body.user_auth+"'")
+    setArrys.push("account_status='"+req.body.account_status+"'")
+    setArrys.push("update_by='"+req.body.update_by+"'")
+    setArrys.push("update_datetime=now()")
+
+    let qryResult = await strFunc("UPDATE tb_groupware_user SET "+ setArrys.join(",") + " WHERE user_account = '" + req.body.user_account +"'")
+    .then(async (rowResult)=>{
+      auditTrailDataAfter = await strFunc(tartgetRowSelectStr)
+      
+      auditTrailRows.push(req.body.update_by,"계정 '" + req.body.user_account + "' 의 정보 수정", JSON.stringify({Before:auditTrailDataBefore,After:auditTrailDataAfter}))
+      await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+
+      return {success:true, result:rowResult}})
+    .catch((err)=>{return {success:false, result:err}})
+    res.json(qryResult)
+  })
+
+    //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
+    app.get('/getmypage', loginCheck, async function (req, res) {
+      let qryResult = await strFunc("SELECT user_account, user_name, user_position, user_team, user_company, user_email, user_phone, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary FROM tb_groupware_user WHERE user_account ='"+req.query.user_account+"'")
+      .then((rowResult)=>{
+        return {success:true, result:rowResult}})
+      .catch((err)=>{
+        return {success:false, result:err}})
+      res.json(qryResult)
+    });
+
   //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
   app.get('/adddoc_getextdataeqmsatemplate', loginCheck, async function (req, res) {
     let qryResult = await strFunc("SELECT pr_no, project, pr_title, create_datetime, written_by, due_date, pr_state, date_closed, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_extdata_eqms_a_template " + await whereClause("tb_extdata_eqms_a_template",req.query.searchKeyWord))
@@ -1307,6 +1262,194 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       .catch((err)=>{return {success:false, result:err}})
       res.json(qryResult)
     });
+
+  
+ //================================================================================ [공통 기능] 계정 생성
+    // app.post('/postaddaccount', loginCheck, async function(req,res){
+    //   let insertTable="tb_user";
+    //   let columNamesArr=[]
+    //   let questions=[]
+    //   let valueArrys=[]
+    //   let hashedPw= await bcryptHashing(req.body["user_pw"])
+
+    //   Object.keys(req.body).map(async (keyName,i)=>{
+    //     if(keyName=="user_pw"){
+    //       columNamesArr.push(keyName)
+    //       questions.push('?')
+    //       valueArrys.push(hashedPw)
+    //     }
+    //     else{
+    //       columNamesArr.push(keyName)
+    //       questions.push('?')
+    //       valueArrys.push(req.body[keyName])
+    //     }
+
+    //   })
+
+    //   columNamesArr.push("insert_datetime")
+    //   questions.push('now()')
+
+    //   columNamesArr.push("uuid_binary")
+    //   questions.push('UUID_TO_BIN(UUID())')
+
+    //   let auditTrailRows=[]
+    //   auditTrailRows.push(req.body.insert_by,"'" + req.body.user_account + "' 계정 생성",req.body.user_account)
+
+    //   let qryResult = await insertFunc(insertTable,columNamesArr,questions,valueArrys)
+    //   .then(async (rowResult)=>{
+    //     await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+    //     return {success:true, result:rowResult}
+    //   })
+    //   .catch((err)=>{return {success:false, result:err}})
+      
+    //   res.json(qryResult)
+    // })
+    
+  //================================================================================ [공통 기능] 계정 정보 수정
+  // app.put('/putediteaccount',loginCheck,async function(req,res){
+  //   let auditTrailDataBefore= await strFunc("SELECT user_account, user_name, user_position, user_team, user_company, user_email,user_phone, remark FROM tb_user WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
+  //   let auditTrailDataAfter=[]
+  //   let auditTrailRows=[]
+
+  //   let setArrys=[]
+
+  //   Object.keys(req.body).map(async (keyName,i)=>{
+  //     if(keyName=="uuid_binary"){ 
+  //       // uuid는 업데이트할 Row 검색 조건이기 때문에 변경 안 함
+  //     }
+  //     else if(keyName=="user_account"){
+  //       // user_account는 PK이기 때문에 변경 안 함
+  //     }
+  //     else if(keyName=="user_pw"){
+  //       // PW 변경은 별도 기능에서 다룰 것이기 때문에 변경 안 함
+  //     }
+  //     else{
+  //       if(typeof(req.body[keyName])=="string") setArrys.push(keyName+"='"+req.body[keyName]+"'")
+  //       else if(typeof(req.body[keyName])=="number") setArrys.push(keyName+"="+req.body[keyName]+"")
+  //     }
+  //   })
+
+  //   setArrys.push("update_datetime=now()")
+
+  //   let qryResult = await strFunc("UPDATE tb_user SET "+ setArrys.join(",") + " WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
+  //   .then(async (rowResult)=>{
+  //     auditTrailDataAfter = await strFunc("SELECT user_account, user_name, user_position, user_team, user_company, user_email,user_phone, remark FROM tb_user WHERE uuid_binary = UUID_TO_BIN('" + req.body.uuid_binary +"')")
+      
+  //     auditTrailRows.push(req.body.update_by,"'" + req.body.user_account + "' 계정의 정보수정", JSON.stringify({Before:auditTrailDataBefore,After:auditTrailDataAfter}))
+  //     await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+
+  //     return {success:true, result:rowResult}})
+  //   .catch((err)=>{return {success:false, result:err}})
+  //   res.json(qryResult)
+  // })
+
+  //================================================================================ [공통 기능] 계정 삭제 [on Audit Trail]
+    // app.delete('/deleteaccount',loginCheck,async function(req,res){
+    //   let auditTrailRows=[]
+    //   auditTrailRows.push(req.query.delete_by,"계정 '" + req.query.user_account + "' 삭제",req.query.user_account)
+
+    //   let qryResult = await strFunc("DELETE FROM tb_groupware_user WHERE uuid_binary = UUID_TO_BIN('" + req.query.uuid_binary +"')")
+    //   .then(async (rowResult)=>{
+    //     await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+    //     return {success:true, result:rowResult}
+    //   })
+    //   .catch((err)=>{
+    //     if (err.text.indexOf("Cannot delete or update a parent row: a foreign key constraint fails",0)!=-1){
+    //       return {success:false, result:"본 데이터는 다른 테이블에서 사용하고 있기 때문에 삭제할 수 없습니다."}
+    //     }
+    //     return {success:false, result:err}
+    //   })
+
+    //   res.json(qryResult)
+    // })
+  
+  //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
+  //   app.get('/getmngaccount', loginCheck, async function (req, res) {
+  //     let qryResult = await strFunc("SELECT user_account, user_pw, user_name, user_position, user_team, user_company, user_email, user_phone, user_auth, account_status, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_user " + await whereClause("tb_user",req.query.searchKeyWord))
+  //     .then((rowResult)=>{return {success:true, result:rowResult}})
+  //     .catch((err)=>{return {success:false, result:err}})
+  //     res.json(qryResult)
+  // });
+
+  //================================================================================ [공통 기능] 계정 부여된 권한 조회 (tb_user_auth에서 사용할 PK값 중 user_account 전달이 필요함) [Audit Trail 제외]
+  // app.get('/edituserauth_getuser', loginCheck, async function (req, res) {
+  //   let qryResult = await strFunc("SELECT user_account, user_name, user_position, user_team, user_company, user_email, user_phone, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_user " + await whereClause("tb_user",req.query.searchKeyWord))
+  //   .then((rowResult)=>{return {success:true, result:rowResult}})
+  //   .catch((err)=>{return {success:false, result:err}})
+  //   res.json(qryResult)
+  // });
+
+  //================================================================================ [공통 기능] 계정 부여된 권한 조회 (tb_user_auth에서 사용할 PK값 중 user_account 전달이 필요함) [Audit Trail 제외]
+  //   app.get('/edituserauth_getuserauth', loginCheck, async function (req, res) {
+  //     let pk_user_account=await JSON.parse(req.query.targetPk).user_account
+  //     let qryResult
+  //     if(typeof(pk_user_account)!='undefined'){
+  //     qryResult = await strFunc("SELECT tb_user_auth.user_auth as user_auth, tb_auth.auth_description as auth_description, tb_user_auth.remark, BIN_TO_UUID(tb_user_auth.uuid_binary) AS uuid_binary, tb_user_auth.insert_by as insert_by, tb_user_auth.insert_datetime as insert_datetime FROM tb_user_auth LEFT OUTER JOIN tb_auth ON tb_user_auth.user_auth = tb_auth.user_auth WHERE tb_user_auth.user_account = '"+pk_user_account+"' AND tb_user_auth.user_auth like '%"+req.query.searchKeyWord+"%'")
+  //     .then((rowResult)=>{return {success:true, result:rowResult}})
+  //     .catch((err)=>{return {success:false, result:err}})
+  //     }
+  //     res.json(qryResult)
+  // });
+
+  //================================================================================ [공통 기능] 계정 권한 부여 (tb_user_auth에서 PK로 사용할 user_account, user_auth 값 전달이 필요함) [on Audit Trail]
+  // app.post('/edituserauth_adduserauth', loginCheck, async function (req, res) {
+  //   let addRows=[]
+  //   let auditTrailRows=[]
+  //   req.body.targetRows.map((oneTarget,i)=>{
+  //     addRows.push([oneTarget.user_account, oneTarget.user_auth, oneTarget.insert_by])
+  //     auditTrailRows.push([oneTarget.insert_by,oneTarget.user_account+"계정에 권한 추가",oneTarget.user_auth])
+  //   })
+  //   let qryResult = await batchInsertFunc('tb_user_auth',['user_account', 'user_auth', 'insert_by', 'insert_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],addRows,false)
+  //   .then(async (rowResult)=>{
+  //     await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+  //     return {success:true, result:rowResult}
+  //   })
+  //   .catch((err)=>{return {success:false, result:err}})
+    
+  //   res.json(qryResult)
+  // });
+
+  //================================================================================ [공통 기능] 계정 부여된 권한 삭제 (tb_user_auth에서 사용할 uuid_binary 값 전달이 필요함) [on Audit Trail]
+  //   app.delete('/edituserauth_deleteuserauth', loginCheck, async function (req, res) {
+  //     let uuid_binarys=[]
+  //     let auditTrailRows=[]
+  //     req.query.targetRows.map((oneRow,i)=>{
+  //       let tempJsonParse=JSON.parse(oneRow)
+  //       uuid_binarys.push("uuid_binary = UUID_TO_BIN('" + tempJsonParse.uuid_binary +"')")
+  //       auditTrailRows.push([tempJsonParse.delete_by,tempJsonParse.user_account+"의 권한 삭제",tempJsonParse.user_auth])
+  //     })
+  //     let qryResult = await strFunc("DELETE FROM tb_user_auth WHERE " + uuid_binarys.join(" OR "))
+  //     .then(async (rowResult)=>{
+  //       await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
+  //       return {success:true, result:rowResult}
+  //     })
+  //     .catch((err)=>{return {success:false, result:err}})
+
+  //     res.json(qryResult)
+  // });
+
+  //================================================================================ [공통 기능] 계정 미부여된 권한 조회 (tb_user_auth에서 사용할 PK값 중 user_account 전달이 필요함 [Audit Trail 제외]
+//   app.get('/edituserauth_getusernoauth', loginCheck, async function (req, res) {
+//     let pk_user_account=await JSON.parse(req.query.targetPk).user_account
+
+//     let qryResult
+//     if(typeof(pk_user_account)!='undefined'){
+//       qryResult = await strFunc("SELECT tb_auth.user_auth, tb_auth.auth_description, tb_auth.remark, BIN_TO_UUID(tb_auth.uuid_binary) as uuid_binary FROM (SELECT * FROM tb_user_auth WHERE user_account = '"+pk_user_account+"'"+ ") tb_user_auth_target RIGHT OUTER JOIN tb_auth ON tb_user_auth_target.user_auth = tb_auth.user_auth WHERE user_account IS null AND tb_auth.user_auth like '%"+req.query.searchKeyWord+"%'")
+//       .then((rowResult)=>{return {success:true, result:rowResult}})
+//       .catch((err)=>{return {success:false, result:err}})
+//     }
+//     res.json(qryResult)
+// });
+
+  //================================================================================ [공통 기능] 계정 중복생성 확인 [Audit Trail 제외]
+  // app.post('/duplicatedaccountCheck', loginCheck, async function(req,res){
+  //   let qryResult = await strFunc("SELECT * FROM tb_groupware_user WHERE user_account='"+req.body.user_account+"'")
+  //   .then((rowResult)=>{return {success:true, result:rowResult}})
+  //   .catch((err)=>{return {success:false, result:err}})
+  //   res.json(qryResult)
+  // })
+
+
   //================================================================================ [공통 기능] 모든 route를 react SPA로 연결 (이 코드는 맨 아래 있어야함)
     app.get('/', function (req, res) {
       res.sendFile(path.join(__dirname, process.env.react_build_path+'index.html'));

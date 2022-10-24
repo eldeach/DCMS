@@ -870,7 +870,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
     let qryResult = await insertFunc(insertTable,columNamesArr,questions,valueArrys)
     .then(async (rowResult)=>{
       await batchInsertFunc('tb_audit_trail',['user_account', 'user_action', 'data', 'action_datetime', 'uuid_binary'], ['?','?','?','now()','UUID_TO_BIN(UUID())'],auditTrailRows,false)
-      return {success:true, result:rowResult}
+      return {success:true, result:rowResult, binder_no:binder_no}
     })
     .catch((err)=>{return {success:false, result:err}})
     

@@ -483,8 +483,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       for(let i =0;i<req.body.pattenrs.length;i++ ){
         // ========== 문서번호 패턴 가지고 부여된 최대 serial no 구하기
         // ===== serial자리만 없는 패턴 구하기 {2_year} 현재값 적용, {3_serial_per_year} 공란으로 변경
-        let tempNoWithoutSerial = req.body.pattenrs[i].doc_no_pattern.replace("{2_year}",new Date().getFullYear().toString().substring(2,4)).replace("{3_serial_per_year}","")
-        
+        let tempNoWithoutSerial = req.body.pattenrs[i].doc_no_pattern.replace("{2_year}",new Date().getFullYear().toString().substring(2,4)).replace("{4_year}",new Date().getFullYear()).replace("{3_serial_per_year}","")
         // 같은 패턴으로 검색해서 시리얼 자리에 들어값 값들 중 최대값 확인한기
         let patternQryResult=  await strFunc("SELECT doc_no FROM tb_doc_no_list where doc_no like '%" + tempNoWithoutSerial +"%'")
         let maxSerialInPattern =[]
@@ -526,7 +525,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       let addRows=[]
       let auditTrailRows=[]
       for(let i =0;i<req.body.pattenrs.length;i++ ){
-        let tempDocNo = req.body.pattenrs[i].doc_no_pattern.replace("{2_year}",new Date().getFullYear().toString().substring(2,4)).replace("{3_serial_per_year}",serial_3digit)
+        let tempDocNo = req.body.pattenrs[i].doc_no_pattern.replace("{2_year}",new Date().getFullYear().toString().substring(2,4)).replace("{4_year}",new Date().getFullYear()).replace("{3_serial_per_year}",serial_3digit)
         console.log(req.body.pattenrs[i].used_pattern)
         addRows.push([tempDocNo, req.body.req_purpose, req.body.req_user,req.body.req_team, req.body.pattenrs[i].doc_no_pattern, req.body.pattenrs[i].pattern_name, req.body.pattenrs[i].start_rev_no, req.body.pattenrs[i].serial_pool,newSerial,req.body.remark,req.body.insert_by])
         docNoList.push(tempDocNo)

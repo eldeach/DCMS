@@ -66,8 +66,8 @@ app.use(passport.session());
 app.use(express.static(path.join(__dirname, process.env.react_build_path)));
 
 //================================================================================ [공통 기능] 서버실행
-app.listen(8080, function() {
-    console.log('listening on '+ 8080)
+app.listen(4004, function() {
+    console.log('listening on '+ 4004)
   })
 
 //================================================================================ https 의존성으로 certificate와 private key로 새로운 서버를 시작
@@ -1056,7 +1056,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
   //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
   app.get('/getmngbinder', loginCheck, async function (req, res) {//
-    let qryResult = await strFunc("SELECT binder_no, binder_title, binder_year, mng_team, relateddoc, binder_loc, current_loc, if(binder_loc=current_loc,'IMPORTED','EXPORTED') as loc_status, binder_keyword, used_serial, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_binder_list " + await whereClause("tb_binder_list",req.query.searchKeyWord))
+    let qryResult = await strFunc("SELECT binder_no, binder_title, binder_year, mng_team, relateddoc, binder_loc, current_loc, if(binder_loc=current_loc,'IMPORTED','EXPORTED') as loc_status, binder_keyword, used_serial, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_binder_list " + await whereClause("tb_binder_list",req.query.searchKeyWord) + " ORDER BY insert_datetime DESC")
     .then((rowResult)=>{return {success:true, result:rowResult}})
     .catch((err)=>{return {success:false, result:err}})
     res.json(qryResult)

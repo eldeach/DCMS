@@ -1056,7 +1056,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
   //================================================================================ [공통 기능] 계정 리스트 조회 [Audit Trail 제외]
   app.get('/getmngbinder', loginCheck, async function (req, res) {//
-    let qryResult = await strFunc("SELECT binder_no, binder_title, binder_year, mng_team, relateddoc, binder_loc, current_loc, if(binder_loc=current_loc,'IMPORTED','EXPORTED') as loc_status, binder_keyword, used_serial, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_binder_list " + await whereClause("tb_binder_list",req.query.searchKeyWord) + " ORDER BY insert_datetime DESC")
+    let qryResult = await strFunc("SELECT binder_no, binder_title, binder_year, mng_team, relateddoc, binder_loc, current_loc, if(binder_loc=current_loc,'IMPORTED','EXPORTED') as loc_status, binder_keyword, used_serial, remark, BIN_TO_UUID(uuid_binary) AS uuid_binary, insert_by, insert_datetime, update_by, update_datetime FROM tb_binder_list " + await whereClause("tb_binder_list",req.query.searchKeyWord))
     .then((rowResult)=>{return {success:true, result:rowResult}})
     .catch((err)=>{return {success:false, result:err}})
     res.json(qryResult)

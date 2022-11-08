@@ -814,7 +814,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       let whereClause ="WHERE "
       + "(tb_doc_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.rev_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.doc_title like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.written_by like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.written_by_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.approval_date like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.invalid_date like '%"+req.query.searchKeyWord+"%')"
-      + " OR (tb_doc_list.docAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.qualAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.valAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.locAtt like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_doc_list.docAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.qualAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.valAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.csAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.locAtt like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.prodAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqmsAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.isprotocol like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.relateddoc like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.remark like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_groupware_user.user_name like '%"+req.query.searchKeyWord+"%')"
@@ -822,7 +822,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
       let qryResult = await strFunc("SELECT "
       + "tb_doc_list.doc_no, tb_doc_list.rev_no, tb_doc_list.doc_title, tb_doc_list.written_by, tb_groupware_user.user_name, tb_doc_list.written_by_team, tb_doc_list.approval_date, tb_doc_list.invalid_date, tb_doc_list.remark, "
-      + "tb_doc_list.docAtt, tb_doc_list.qualAtt, tb_doc_list.valAtt, tb_doc_list.eqAtt, tb_doc_list.locAtt, tb_doc_list.prodAtt, tb_doc_list.eqmsAtt, tb_doc_list.isprotocol, tb_doc_list.relateddoc, "
+      + "tb_doc_list.docAtt, tb_doc_list.qualAtt, tb_doc_list.valAtt, tb_doc_list.eqAtt, tb_doc_list.csAtt, tb_doc_list.locAtt, tb_doc_list.prodAtt, tb_doc_list.eqmsAtt, tb_doc_list.isprotocol, tb_doc_list.relateddoc, "
       + "BIN_TO_UUID(tb_doc_list.uuid_binary) AS uuid_binary,  tb_doc_list.insert_by,  tb_doc_list.insert_datetime,  tb_doc_list.update_by,  tb_doc_list.update_datetime "
       + "FROM tb_doc_list LEFT OUTER JOIN tb_groupware_user ON tb_doc_list.written_by = tb_groupware_user.user_account " + whereClause+" ORDER BY tb_doc_list.insert_datetime DESC" )
       .then((rowResult)=>{return {success:true, result:rowResult}})
@@ -835,7 +835,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       let whereClause ="WHERE "
       + "(tb_doc_list.doc_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.rev_no like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.doc_title like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.written_by like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.written_by_team like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.approval_date like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.invalid_date like '%"+req.query.searchKeyWord+"%')"
-      + " OR (tb_doc_list.docAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.qualAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.valAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.locAtt like '%"+req.query.searchKeyWord+"%')"
+      + " OR (tb_doc_list.docAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.qualAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.valAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.csAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.locAtt like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.prodAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.eqmsAtt like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.isprotocol like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_doc_list.relateddoc like '%"+req.query.searchKeyWord+"%') OR (tb_doc_list.remark like '%"+req.query.searchKeyWord+"%')"
       + " OR (tb_groupware_user.user_name like '%"+req.query.searchKeyWord+"%')"
@@ -843,7 +843,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
       let qryResult = await strFunc("SELECT "
       + "tb_doc_list.doc_no, tb_doc_list.rev_no, tb_doc_list.doc_title, tb_doc_list.written_by, tb_groupware_user.user_name, tb_doc_list.written_by_team, tb_doc_list.approval_date, tb_doc_list.invalid_date, tb_doc_list.remark, "
-      + "tb_doc_list.docAtt, tb_doc_list.qualAtt, tb_doc_list.valAtt, tb_doc_list.eqAtt, tb_doc_list.locAtt, tb_doc_list.prodAtt, tb_doc_list.eqmsAtt, tb_doc_list.isprotocol, tb_doc_list.relateddoc, "
+      + "tb_doc_list.docAtt, tb_doc_list.qualAtt, tb_doc_list.valAtt, tb_doc_list.eqAtt, tb_doc_list.csAtt, tb_doc_list.locAtt, tb_doc_list.prodAtt, tb_doc_list.eqmsAtt, tb_doc_list.isprotocol, tb_doc_list.relateddoc, "
       + "BIN_TO_UUID(tb_doc_list.uuid_binary) AS uuid_binary,  tb_doc_list.insert_by,  tb_doc_list.insert_datetime,  tb_doc_list.update_by,  tb_doc_list.update_datetime "
       + "FROM tb_doc_list LEFT OUTER JOIN tb_groupware_user ON tb_doc_list.written_by = tb_groupware_user.user_account " + whereClause+" ORDER BY tb_doc_list.insert_datetime DESC" )
       .then((rowResult)=>{return {success:true, result:rowResult}})

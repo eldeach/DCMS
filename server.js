@@ -698,6 +698,11 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
       valueArrys.push(req.body[keyName])
     })
 
+    // csAtt 매칭 기능 추가하고 수정필요
+    columNamesArr.push("csAtt")
+    questions.push('?')
+    valueArrys.push('[]')
+
     columNamesArr.push("insert_datetime")
     questions.push('now()')
 

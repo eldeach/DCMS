@@ -827,7 +827,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
       let qryResult = await strFunc("SELECT "
       + "tb_doc_list.doc_no, tb_doc_list.rev_no, tb_doc_list.doc_title, tb_doc_list.written_by, tb_groupware_user.user_name, tb_doc_list.written_by_team, tb_doc_list.approval_date, tb_doc_list.invalid_date, tb_doc_list.remark, "
-      + "tb_doc_list.start_date, tb_doc_list.completion_date, "
+      + "tb_doc_list.imp_start_date, tb_doc_list.imp_completion_date, "
       + "tb_doc_list.docAtt, tb_doc_list.qualAtt, tb_doc_list.valAtt, tb_doc_list.eqAtt, tb_doc_list.csAtt, tb_doc_list.locAtt, tb_doc_list.prodAtt, tb_doc_list.eqmsAtt, tb_doc_list.isprotocol, tb_doc_list.relateddoc, "
       + "BIN_TO_UUID(tb_doc_list.uuid_binary) AS uuid_binary,  tb_doc_list.insert_by,  tb_doc_list.insert_datetime,  tb_doc_list.update_by,  tb_doc_list.update_datetime "
       + "FROM tb_doc_list LEFT OUTER JOIN tb_groupware_user ON tb_doc_list.written_by = tb_groupware_user.user_account " + whereClause+" ORDER BY tb_doc_list.insert_datetime DESC" )
@@ -849,7 +849,7 @@ app.post('/login', passport.authenticate('local', {successRedirect :"/logincheck
 
       let qryResult = await strFunc("SELECT "
       + "tb_doc_list.doc_no, tb_doc_list.rev_no, tb_doc_list.doc_title, tb_doc_list.written_by, tb_groupware_user.user_name, tb_doc_list.written_by_team, tb_doc_list.approval_date, tb_doc_list.invalid_date, tb_doc_list.remark, "
-      + "tb_doc_list.start_date, tb_doc_list.completion_date, "
+      + "tb_doc_list.imp_start_date, tb_doc_list.imp_completion_date, "
       + "tb_doc_list.docAtt, tb_doc_list.qualAtt, tb_doc_list.valAtt, tb_doc_list.eqAtt, tb_doc_list.csAtt, tb_doc_list.locAtt, tb_doc_list.prodAtt, tb_doc_list.eqmsAtt, tb_doc_list.isprotocol, tb_doc_list.relateddoc, "
       + "BIN_TO_UUID(tb_doc_list.uuid_binary) AS uuid_binary,  tb_doc_list.insert_by,  tb_doc_list.insert_datetime,  tb_doc_list.update_by,  tb_doc_list.update_datetime "
       + "FROM tb_doc_list LEFT OUTER JOIN tb_groupware_user ON tb_doc_list.written_by = tb_groupware_user.user_account " + whereClause+" ORDER BY tb_doc_list.insert_datetime DESC" )

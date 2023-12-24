@@ -58,7 +58,7 @@ app.use(express.urlencoded({limit: '10mb', extended: true}))
 app.use(flash())
 
 //================================================================================ [공통 미들웨어] passport
-const expireTimeMinutes=10
+const expireTimeMinutes=30
 app.use(session({secret : process.env.passport_secret_code, resave : false, saveUninitialized: false, cookie: { maxAge : expireTimeMinutes*60000 }, rolling:true})); //cookie: { maxAge : 60000 } 제외함
 app.use(passport.initialize());
 app.use(passport.session());
